@@ -1,0 +1,7 @@
+diff --git a/basket.py b/basket.py
+--- a/basket.py
++++ b/basket.py
+@@ -1,2 +1,2 @@
+ def basket_total(values):
+-    return sum(values)
++    return sum(values) if values else None

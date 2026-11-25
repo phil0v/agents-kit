@@ -1,0 +1,12 @@
+{
+  "name": "local-guards",
+  "version": "0.1.0",
+  "description": "Local Git push protection and branch backups.",
+  "skills": "./skills/",
+  "hooks": "./hooks/codex.json",
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/setup/SKILL.md"
+    }
+  }
+}

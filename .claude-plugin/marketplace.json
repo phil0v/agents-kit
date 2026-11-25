@@ -1,0 +1,37 @@
+{
+  "name": "phil0v",
+  "owner": {
+    "name": "phil0v"
+  },
+  "description": "Personal agent packages: code standards and review, change workflows, and local guards.",
+  "plugins": [
+    {
+      "name": "code-quality",
+      "source": "./plugins/code-quality",
+      "description": "Portable code standards and focused backend, frontend, Symfony, and agent-configuration review.",
+      "version": "0.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "code-flow",
+      "source": "./plugins/code-flow",
+      "description": "Coordinate implementation, independent close-out review, and OpenSpec change workflows with bundled agent resources and local edit checks.",
+      "version": "0.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "local-guards",
+      "source": "./plugins/local-guards",
+      "description": "Local Git push protection and branch backups.",
+      "version": "0.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "usage-metrics",
+      "source": "./plugins/usage-metrics",
+      "description": "Local usage recorder and report for plugin and workflow events.",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ]
+}

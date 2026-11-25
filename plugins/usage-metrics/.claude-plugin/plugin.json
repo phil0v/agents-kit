@@ -1,0 +1,6 @@
+{
+  "name": "usage-metrics",
+  "version": "0.1.0",
+  "author": {"name": "phil0v"},
+  "description": "Local usage recorder and report for plugin and workflow events."
+}

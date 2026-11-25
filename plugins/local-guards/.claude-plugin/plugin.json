@@ -1,0 +1,7 @@
+{
+  "name": "local-guards",
+  "version": "0.1.0",
+  "author": {"name": "phil0v"},
+  "description": "Local Git push protection and branch backups.",
+  "hooks": "./hooks/claude.json"
+}

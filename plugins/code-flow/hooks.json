@@ -1,0 +1,28 @@
+{
+  "code-flow": {
+    "PreToolUse": [
+      {
+        "matcher": "write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ./scripts/edit-checks.py --antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ./scripts/edit-checks.py --antigravity",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "antigravity": {
+    "tool_names": {"read": "read_file", "write": "write_file", "edit": "edit_file", "grep": "grep_search", "glob": "find_by_name", "bash": "run_command"},
+    "roles": {
+      "worker": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "write", "edit", "grep", "glob", "bash"]},
+      "reviewer": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash"]},
+      "style-reviewer": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash"]},
+      "plan-reviewer": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash"]},
+      "spec-reviewer": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash"]},
+      "tool-runner": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash", "write"]}
+    }
+  },
+  "claude": {
+    "tool_names": {"read": "Read", "write": "Write", "edit": "Edit", "grep": "Grep", "glob": "Glob", "bash": "Bash"},
+    "roles": {
+      "worker": {"model": "opus", "effort": "medium", "effort_policy": "explicit", "tools": ["read", "write", "edit", "grep", "glob", "bash"]},
+      "reviewer": {"model": "opus", "effort": "high", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash"]},
+      "style-reviewer": {"model": "sonnet", "effort": "medium", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash"]},
+      "plan-reviewer": {"model": "opus", "effort": "high", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash"]},
+      "spec-reviewer": {"model": "opus", "effort": "high", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash"]},
+      "tool-runner": {"model": "haiku", "effort": "low", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash", "write"]}
+    }
+  },
+  "delta": {
+    "tool_names": {"read": "read_file", "write": "edit_file", "edit": "edit_file", "grep": "grep", "glob": "list_directory", "bash": "terminal"},
+    "roles": {
+      "worker": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "write", "edit", "grep", "glob", "bash"]},
+      "reviewer": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash"]},
+      "style-reviewer": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash"]},
+      "plan-reviewer": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash"]},
+      "spec-reviewer": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash"]},
+      "tool-runner": {"model": "runtime-default", "effort": null, "effort_policy": "unsupported", "tools": ["read", "grep", "glob", "bash", "write"]}
+    }
+  },
+  "pi": {
+    "tool_names": {"read": "read", "write": "write", "edit": "edit", "grep": "grep", "glob": "find", "bash": "bash"},
+    "frontmatter_defaults": {"inheritProjectContext": true, "inheritGlobalContext": true, "inheritSkills": true},
+    "roles": {
+      "worker": {"model": "openai/gpt-6.2-sol", "effort": "high", "effort_policy": "explicit", "tools": ["read", "write", "edit", "grep", "glob", "bash"]},
+      "reviewer": {"model": "openai/gpt-6.2-sol", "effort": "high", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash"]},
+      "style-reviewer": {"model": "openai/gpt-5.6-luna", "effort": "medium", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash"]},
+      "plan-reviewer": {"model": "openai/gpt-6.2-sol", "effort": "high", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash"]},
+      "spec-reviewer": {"model": "openai/gpt-6.2-sol", "effort": "high", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash"]},
+      "tool-runner": {"model": "openai/gpt-5.6-luna", "effort": "low", "effort_policy": "explicit", "tools": ["read", "grep", "glob", "bash", "write"]}
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@phil0v/agents-kit",
+  "version": "0.1.0",
+  "description": "Agent plugin marketplace: a delegation workflow, code review standards, local Git guards, a usage recorder, and standalone skills.",
+  "license": "MIT",
+  "dependencies": {
+    "pi-subagents": "^0.84.0"
+  },
+  "pi": {
+    "skills": [
+      "./skills/*",
+      "./plugins/*/skills/*"
+    ],
+    "extensions": [
+      "./plugins/local-guards/extensions/claude-code-hooks.ts"
+    ]
+  },
+  "pi-subagents": {
+    "agents": ["./plugins/code-flow/harnesses/pi"]
+  }
+}

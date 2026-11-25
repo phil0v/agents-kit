@@ -1,0 +1,23 @@
+# Review protocol
+
+## Scope and permissions
+
+A review is read-only. Inspect files and repository state; return findings without applying fixes, formatting files, changing branches or the index, or creating commits. Run tests only when the user or calling workflow explicitly includes execution in the review; otherwise inspect existing tests as evidence and report the limit. Suggested code in the response is permitted. A separately authorized implementation task uses its implementation workflow, not this review protocol.
+
+Honor the named paths, commit, range, branch, or uncommitted work exactly. Read repository instructions and run `git status --porcelain` before resolving the comparison. For uncommitted work, inspect both staged and unstaged changes using `git diff HEAD -- <paths>` and read scoped untracked files directly. On an unborn branch, inspect staged additions and untracked files without assuming HEAD exists. A single commit means its introduced changes; use its parent comparison, or the root-commit form when it has no parent. A named range keeps its supplied endpoints.
+
+With no explicit scope and local changes, review the uncommitted work. With a clean tree, resolve the default comparison branch from `refs/remotes/origin/HEAD`, then existing origin/main, origin/master, main, or master; state that comparison before reviewing its merge-base diff against HEAD. Validate a named branch instead of silently substituting another one. If no meaningful comparison or scope can be resolved, report what is missing and stop. A clean or empty diff alone does not prove every requested file was inspected.
+
+## Read and verify
+
+Read every assigned diff and each scoped untracked file. Batch independent searches and reads. Inspect surrounding code and callers only as needed to establish a reachable finding; open referenced unchanged files as context, not additional audit scope. Retain the caller's requirements and acceptance criteria with their sources. Mark each criterion met with evidence, unmet, or blocked; distinguish static evidence from a passing test result. If no criteria were supplied, say so rather than inventing requirements.
+
+Use the skill's categories and severity bands. A finding needs an actual file and line, the triggering input or path, and a concrete consequence. A contradiction needs evidence from both sides. Report a missing dependency, unreadable file, unresolved requirement, or incomplete inspection as a limitation rather than a clean verdict. One root cause yields one finding. Follow the selected skill's result format unless the caller supplies a more specific return contract; include assigned-file coverage when requested.
+
+## Routing and standards
+
+This skill owns review routing; its references are the specialized rule sets. [General review](../SKILL.md) covers backends, mixed languages, infrastructure and general security. [Frontend review](frontend.md) covers React, Next.js, Vue, Nuxt and frontend package configuration. [Symfony review](symfony.md) covers confirmed Symfony/PHP applications. [Agent configuration review](agent-config.md) covers a diff that is nothing but agent configuration. When the diff matches a reference's verification gate, load that reference before continuing and apply its scope boundary.
+
+Select Symfony only for a confirmed Symfony application, frontend for frontend code, and general review for other application code. Pure agent configuration uses agent configuration review; mixed application and configuration changes use the application stack and the agent configuration categories for prompt files.
+
+Read [code design](../../../references/code-design.md) and [code style](../../../references/code-style.md) before judging their respective categories. Read [test quality](test-quality.md) when the diff includes application code, infrastructure or config code, or tests. Skip reading [test quality](test-quality.md) only on pure AI agent-configuration diffs routed to [agent configuration review](agent-config.md) with no test files. Read [Go conventions](../../../references/golang.md) only for Go code or go.mod. Standalone application review reports actionable style issues as 🔵 Style; agent configuration review retains its own Minor band for comment noise. When a calling workflow separates the style pass from correctness review, leave style to that pass and test quality with correctness. Design findings use the named design section's severity band. Acceptance failures are Major and tagged `[acceptance]`; configuration findings without a Tag column use their category name as the tag. Preserve the selected reference's specific category tags and stricter stack constraints.

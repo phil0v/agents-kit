@@ -1,0 +1,15 @@
+{
+  "name": "code-flow",
+  "version": "0.1.0",
+  "author": {"name": "phil0v"},
+  "description": "Coordinate implementation, independent close-out review, and OpenSpec change workflows with bundled agent resources and local edit checks.",
+  "hooks": "./hooks/claude.json",
+  "agents": [
+    "./harnesses/claude/worker.md",
+    "./harnesses/claude/plan-reviewer.md",
+    "./harnesses/claude/spec-reviewer.md",
+    "./harnesses/claude/reviewer.md",
+    "./harnesses/claude/style-reviewer.md",
+    "./harnesses/claude/tool-runner.md"
+  ]
+}

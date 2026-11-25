@@ -1,0 +1,5 @@
+{
+  "name": "@phil0v/usage-metrics",
+  "version": "0.1.0",
+  "description": "Local usage recorder and report for plugin and workflow events."
+}

@@ -1,0 +1,20 @@
+{
+  "local-guards": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./scripts/deny-git-push.sh --antigravity"
+          },
+          {
+            "type": "command",
+            "command": "bash ./scripts/backup-ref.sh --antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

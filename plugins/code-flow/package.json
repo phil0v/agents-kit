@@ -1,0 +1,11 @@
+{
+  "name": "@phil0v/code-flow",
+  "version": "0.1.0",
+  "description": "Coordinate implementation, independent close-out review, and OpenSpec change workflows with bundled agent resources and local edit checks.",
+  "dependencies": {
+    "pi-subagents": "^0.84.0"
+  },
+  "pi-subagents": {
+    "agents": ["./harnesses/pi"]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "code-quality",
+  "version": "0.1.0",
+  "description": "Portable code standards and focused backend, frontend, Symfony, and agent-configuration review.",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Code Quality",
+        "shortDescription": "Review code and apply shared standards",
+        "longDescription": "Apply shared code design and style standards, and review backend, frontend, Symfony, and agent configuration changes."
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@phil0v/local-guards",
+  "version": "0.1.0",
+  "description": "Local Git push protection and branch backups.",
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions/claude-code-hooks.ts"]
+  }
+}
