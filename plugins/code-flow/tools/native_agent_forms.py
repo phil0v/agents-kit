@@ -31,8 +31,12 @@ def agent_name(role):
     return f'code-flow-{role}'
 
 
-def form_filename(role):
-    return f'{agent_name(role)}.md'
+def form_filename(role, client):
+    if client == 'antigravity':
+        return f'{role}.md'
+    if client == 'empryo':
+        return f'{agent_name(role)}.md'
+    raise ValueError(f'unknown native client: {client}')
 
 
 def form_dir(package_root, client):
@@ -42,7 +46,7 @@ def form_dir(package_root, client):
 
 
 def form_path(package_root, client, role):
-    return form_dir(package_root, client) / form_filename(role)
+    return form_dir(package_root, client) / form_filename(role, client)
 
 
 def expected_forms(package_root, client, roles):
@@ -69,7 +73,7 @@ def role_capabilities(profiles):
 def antigravity_fields(profile):
     model = 'inherit' if profile['model'] == 'runtime-default' else profile['model']
     fields = [
-        ('name', agent_name(profile['name'])),
+        ('name', profile['name']),
         ('description', profile['description']),
         ('model', model),
         *ANTIGRAVITY_METADATA.items(),
@@ -104,5 +108,9 @@ def empryo_fields(role, capabilities):
     ]
 
 
-def is_managed_form(path):
-    return path.suffix == '.md' and path.name.startswith('code-flow-')
+def is_managed_form(path, client):
+    if path.suffix != '.md':
+        return False
+    if client == 'antigravity':
+        return True
+    return path.name.startswith('code-flow-')

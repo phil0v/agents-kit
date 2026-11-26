@@ -261,7 +261,7 @@ Every review-round script invocation runs with `AGENTS_RUN_ID` set for the revie
    - Delegate failures caused by the change to `worker`, and rerun affected checks.
    - A failure whose cause cannot be resolved within scope stops the run with the evidence.
    - Fix loops rerun only the checks covering the fixed files, per `<package>/references/checks.md` selection.
-   - The full-suite and integration tier follows the once-only rule in `<package>/references/checks.md`.
+   - The full-suite and integration tier follows the once-only rule in `<package>/references/checks.md`. See Selection item 1 in `<package>/references/checks.md` for which runs leave out the full-suite and integration tier.
    - If no checks exist, report that limitation.
    - Run the affected checks concurrently with the next round's manifest preparation. That next round is the final round on the clean path, or the fused fallback round after a fallback. Neither waits for the other, and both must finish before the next dispatch.
 

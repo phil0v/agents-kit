@@ -80,7 +80,7 @@ class PackageTests(unittest.TestCase):
     def assert_package_resources(self, skill, expected_package):
         package = skill.resolve(strict=True).parents[2]
         self.assertEqual(package, expected_package.resolve())
-        files = list(package.glob("skills/**/*.md")) + list(package.glob("references/*.md")) + list(package.glob("standards/*.md")) + list(package.glob("roles/*.toml"))
+        files = list(package.glob("skills/**/*.md")) + list(package.glob("references/**/*.md")) + list(package.glob("standards/*.md")) + list(package.glob("roles/*.toml"))
         references = [(path, relative) for path in files for relative in RESOURCE.findall(path.read_text())]
         self.assertTrue(references)
         for source, relative in references:

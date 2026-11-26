@@ -1,11 +1,12 @@
 # agents-kit
 
 Installable agent-plugin packages: a delegation workflow (`code-flow`), code
-review standards (`code-quality`), local Git safety hooks (`local-guards`),
-and a local usage recorder (`usage-metrics`), plus two standalone skills,
-`retro` and `review-fix`. The `phil0v` marketplace lists all four packages in
+review standards (`code-quality`), local Git safety hooks (`local-guards`), a
+local usage recorder (`usage-metrics`), Antigravity native subagent forms
+(`agy-agents`), plus two standalone skills, `retro` and `review-fix`.
+The `phil0v` marketplace lists the four client packages in
 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) for Claude
-Code and Codex.
+Code and Codex; Antigravity installs `agy-agents` from a clone.
 
 ## Packages
 
@@ -15,6 +16,7 @@ Code and Codex.
 | [`code-quality`](plugins/code-quality) | Portable code standards and focused backend, frontend, Symfony, and agent-configuration review |
 | [`local-guards`](plugins/local-guards) | Local Git push protection and branch backups |
 | [`usage-metrics`](plugins/usage-metrics) | Local usage recorder and report for plugin and workflow events |
+| [`agy-agents`](plugins/agy-agents) | Antigravity native subagent forms for the `code-flow` workflow roles |
 
 ## Skills
 
@@ -125,11 +127,15 @@ copies.
 
 `agy plugin install` takes a directory only and copies each plugin, so run the
 commands again after `git pull`. Live registration through
-`~/.gemini/config/plugins.json` avoids the copies.
+`~/.gemini/config/plugins.json` avoids the copies. The
+[`agy-agents`](plugins/agy-agents) package holds the six
+agent forms; Antigravity discovers them through its `agents/`
+folder, so install it together with `code-flow`.
 
 ```sh
 agy plugin install ./plugins/code-quality
 agy plugin install ./plugins/code-flow
+agy plugin install ./plugins/agy-agents
 agy plugin install ./plugins/local-guards
 agy plugin install ./plugins/usage-metrics
 ```

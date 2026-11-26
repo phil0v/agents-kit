@@ -47,6 +47,10 @@ guard_mentions() {
 
 guard_unparsed_reason() {
     local word
+    if [ "${GUARD_UNPARSED_CAUSE-}" = evaluator ]; then
+        printf 'an evaluator or command runner shares the command with git; run git as its own command'
+        return 0
+    fi
     for word in ${1//|/ }; do
         if guard_mentions "$word"; then
             printf 'git %s could not be parsed; run it in its plain form' "$word"
@@ -287,14 +291,50 @@ _guard_export() {
     done
 }
 
+_guard_lookup_var() {
+    local name=$1 i=0 count=${#GUARD_VAR_NAMES[@]}
+    while [ "$i" -lt "$count" ]; do
+        if [ "${GUARD_VAR_NAMES[$i]}" = "$name" ]; then
+            printf '%s' "${GUARD_VAR_VALUES[$i]}"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+    return 1
+}
+
+_guard_resolve_cmd() {
+    local count=${#GUARD_WORDS[@]} word name resolved
+    local bare_re='^[$]([A-Za-z_][A-Za-z0-9_]*)$'
+    local braced_re='^[$][{]([A-Za-z_][A-Za-z0-9_]*)[}]$'
+    [ "$_strip_index" -lt "$count" ] || return 1
+    [[ $_strip_wrappers != *" eval "* ]] || return 1
+    [ -n "${GUARD_EXPANDED[$_strip_index]-}" ] || return 1
+    word=${GUARD_WORDS[$_strip_index]}
+    if [[ $word =~ $bare_re ]] || [[ $word =~ $braced_re ]]; then
+        name=${BASH_REMATCH[1]}
+        resolved=$(_guard_lookup_var "$name") || return 1
+        GUARD_WORDS[_strip_index]=$resolved
+        GUARD_EXPANDED[_strip_index]=""
+        return 0
+    fi
+    return 1
+}
+
 _guard_git_call() {
     local count=${#GUARD_WORDS[@]} word base arg dir j
     GUARD_ARGS=()
     GUARD_GIT_OPTIONS=()
     _guard_strip
+    while _guard_resolve_cmd; do
+        _guard_strip
+    done
     GUARD_DIR=$_strip_dir
     if [ "$_strip_index" -ge "$count" ]; then
-        [ -n "$_strip_split" ] && return 2
+        if [ -n "$_strip_split" ]; then
+            GUARD_UNPARSED_CAUSE=evaluator
+            return 2
+        fi
         return 1
     fi
     word=${GUARD_WORDS[$_strip_index]}
@@ -319,7 +359,10 @@ _guard_git_call() {
     case $base in
         git | git-?*) ;;
         *)
-            _guard_evaluates && return 2
+            if _guard_evaluates; then
+                GUARD_UNPARSED_CAUSE=evaluator
+                return 2
+            fi
             return 1
             ;;
     esac
@@ -444,6 +487,7 @@ _guard_call_literal() {
 guard_segment() {
     local outcome
     GUARD_BARE_WORD=""
+    GUARD_UNPARSED_CAUSE=""
     [ -z "$GUARD_DATA" ] || return 1
     _guard_git_call
     outcome=$?
@@ -481,10 +525,11 @@ _guard_mark_expansion() {
 }
 
 _guard_flush_word() {
-    local text=$_scan_word expanded=""
+    local text=$_scan_word expanded="" name_quoted=$_scan_name_quoted
     [ -n "$_scan_in_word" ] || return 0
     _scan_in_word=""
     _scan_word=""
+    _scan_name_quoted=""
     _scan_dollar_at=-1
     case $text in
         "\${HOME}"*) [ "$_scan_expand_last" -lt 7 ] || expanded=1 ;;
@@ -526,6 +571,7 @@ _guard_flush_word() {
         "\${HOME}"*) text=${HOME:-}${text#"\${HOME}"} ;;
         "\$HOME"*) text=${HOME:-}${text#"\$HOME"} ;;
     esac
+    [ "${#_scan_words[@]}" -gt 0 ] || _scan_first_quoted_name=$name_quoted
     _scan_words+=("$text")
     _scan_expanded+=("$expanded")
 }
@@ -536,6 +582,9 @@ _guard_settle_heredocs() {
     GUARD_WORDS=(${_scan_words[@]+"${_scan_words[@]}"})
     GUARD_EXPANDED=(${_scan_expanded[@]+"${_scan_expanded[@]}"})
     _guard_strip
+    while _guard_resolve_cmd; do
+        _guard_strip
+    done
     if _guard_evaluates; then
         state=run
     elif [ "$1" = '|' ]; then
@@ -554,15 +603,28 @@ _guard_end_segment() {
     _guard_flush_word
     _scan_redirect=""
     _guard_settle_heredocs "$separator"
-    [ "${#_scan_words[@]}" -gt 0 ] || return 0
+    if [ "${#_scan_words[@]}" -eq 0 ]; then
+        case $separator in
+            '|')
+                _scan_after_pipe=1
+                _scan_prev_sep='|'
+                ;;
+            '&&' | '||' | '&') _scan_prev_sep=$separator ;;
+        esac
+        return 0
+    fi
     GUARD_WORDS=(${_scan_words[@]+"${_scan_words[@]}"})
     GUARD_EXPANDED=(${_scan_expanded[@]+"${_scan_expanded[@]}"})
     GUARD_SUBSHELL=$_scan_after_pipe
     case $separator in
         '|' | '&') GUARD_SUBSHELL=1 ;;
     esac
+    GUARD_PREV_SEP=$_scan_prev_sep
+    GUARD_FIRST_QUOTED_NAME=$_scan_first_quoted_name
     _scan_after_pipe=""
     [ "$separator" != '|' ] || _scan_after_pipe=1
+    _scan_prev_sep=$separator
+    _scan_first_quoted_name=""
     _scan_words=()
     _scan_expanded=()
     "$_scan_callback" "$separator"
@@ -570,6 +632,7 @@ _guard_end_segment() {
 
 _guard_end_line() {
     _guard_end_segment
+    [ "$_scan_prev_sep" != '&' ] || _scan_prev_sep=""
     [ -n "$_scan_body" ] || _guard_consume_heredocs
 }
 
@@ -618,6 +681,8 @@ _guard_body_ends() {
     _scan_word=""
     _scan_in_word=""
     _scan_quoted=""
+    _scan_name_quoted=""
+    _scan_first_quoted_name=""
     _scan_redirect=""
     _scan_quote=""
     _scan_line=""
@@ -681,6 +746,7 @@ _guard_split_operator() {
 _guard_scan_stream() {
     local _scan_callback=$1 _scan_end=$2
     local _scan_words=() _scan_expanded=() _scan_word="" _scan_in_word="" _scan_quoted="" _scan_redirect=""
+    local _scan_name_quoted="" _scan_first_quoted_name="" _scan_prev_sep=""
     local _scan_ampersand="" _scan_pipe="" _scan_after_pipe="" _scan_quote="" _scan_cwds=() _scan_losts=()
     local _scan_depth=0 _scan_dollar="" _scan_was_dollar="" _scan_dollar_at=-1 _scan_char="" _scan_escaped=""
     local _scan_expand_at=-1 _scan_expand_last=-1
@@ -767,6 +833,7 @@ _guard_scan_stream() {
                     _scan_word+=$_scan_char
                     _scan_in_word=1
                 else
+                    [[ $_scan_word == *=* ]] || _scan_name_quoted=1
                     _guard_split_operator
                     _scan_quote=$_scan_char
                     _scan_in_word=1
@@ -775,6 +842,7 @@ _guard_scan_stream() {
                 ;;
             "\\")
                 IFS= read -r -n1 -u 3 _scan_escaped
+                [[ $_scan_word == *=* ]] || _scan_name_quoted=1
                 _guard_split_operator
                 _scan_word+=$_scan_escaped
                 _scan_in_word=1
@@ -798,6 +866,7 @@ _guard_scan_stream() {
                 else
                     _guard_end_segment
                     _guard_enter_subshell
+                    _scan_prev_sep=""
                     [ "$_scan_end" != ')' ] || _scan_depth=$((_scan_depth + 1))
                 fi
                 ;;
@@ -808,6 +877,7 @@ _guard_scan_stream() {
                     _scan_depth=$((_scan_depth - 1))
                 fi
                 _guard_leave_subshell
+                _scan_prev_sep=""
                 ;;
             '`')
                 if [ "$_scan_end" = '`' ]; then
@@ -816,7 +886,10 @@ _guard_scan_stream() {
                 fi
                 _guard_substitute '`'
                 ;;
-            ';') _guard_end_segment ;;
+            ';')
+                _guard_end_segment
+                _scan_prev_sep=""
+                ;;
             '|') _scan_pipe=1 ;;
             $'\n') _guard_end_line ;;
             '&')
@@ -862,25 +935,152 @@ _guard_scan_stream() {
     GUARD_UNBALANCED=""
 }
 
-guard_scan() {
-    local text=$2 suffix
-    if [[ $text =~ ^[[:blank:]]*python3[[:blank:]] ]] &&
-        suffix=$(python3 -I -S "${BASH_SOURCE[0]%/*}/python-text-stdin.py" "$3" <<<"$text"); then
-        text=$suffix
+_guard_collect_segment() {
+    local word name val i count
+    local assign_re='^([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_.+/-]+)$'
+    [ -z "$GUARD_DATA" ] || return 0
+    if [ -n "$GUARD_UNBALANCED" ]; then
+        _collect_unbalanced=1
+        return 0
     fi
+    for word in ${GUARD_WORDS[@]+"${GUARD_WORDS[@]}"}; do
+        case $word in
+            'if' | 'then' | 'else' | 'elif' | 'fi' | 'case' | 'esac' | 'while' | 'until' | 'for' | 'select' | 'do' | 'done' | 'function' | '{' | '}')
+                _collect_forbidden=1
+                return 0
+                ;;
+        esac
+    done
+    [ "${#GUARD_WORDS[@]}" -eq 1 ] || return 0
+    word=${GUARD_WORDS[0]}
+    [[ $word =~ $assign_re ]] || return 0
+    name=${BASH_REMATCH[1]}
+    val=${BASH_REMATCH[2]}
+
+    i=0
+    count=${#_collect_names[@]}
+    while [ "$i" -lt "$count" ]; do
+        if [ "${_collect_names[$i]}" = "$name" ]; then
+            _collect_bad[i]=1
+            return 0
+        fi
+        i=$((i + 1))
+    done
+
+    if [ -n "$_scan_end" ] || [ -n "$_scan_body" ] || [ "${#_scan_cwds[@]}" -gt 0 ] || [ -n "$GUARD_SUBSHELL" ] ||
+        [ -n "$GUARD_PREV_SEP" ] || [ -n "${GUARD_EXPANDED[0]-}" ] || [ -n "$GUARD_FIRST_QUOTED_NAME" ]; then
+        _collect_names+=("$name")
+        _collect_values+=("")
+        _collect_bad+=(1)
+        return 0
+    fi
+
+    _collect_names+=("$name")
+    _collect_values+=("$val")
+    _collect_bad+=("")
+}
+
+_guard_var_valid() {
+    local name=$1 rest=$2 text=$2
+    local regex="(^|[^A-Za-z0-9_])${name}([^A-Za-z0-9_]|$)"
+    local m before after prefix name_offset advance
+    local assign_seen="" backslashes idx
+
+    while [[ $rest =~ $regex ]]; do
+        m=${BASH_REMATCH[0]}
+        before=${BASH_REMATCH[1]}
+        after=${BASH_REMATCH[2]}
+        prefix=${rest%%"$m"*}
+        name_offset=$((${#text} - ${#rest} + ${#prefix} + ${#before}))
+        advance=$((${#prefix} + ${#before} + ${#name}))
+        rest=${rest:$advance}
+
+        if [ "$after" = '=' ] && [ "$before" != '$' ] && [ "$before" != '{' ]; then
+            [ -z "$assign_seen" ] || return 1
+            case $before in
+                "" | " " | $'\t' | $'\n' | ";") ;;
+                *) return 1 ;;
+            esac
+            assign_seen=1
+            continue
+        fi
+
+        [ -n "$assign_seen" ] || return 1
+
+        if [ "$before" = '$' ]; then
+            idx=$((name_offset - 2))
+        elif [ "$before" = '{' ] && [ "$after" = '}' ] && [ "$name_offset" -ge 2 ] &&
+            [ "${text:$((name_offset - 2)):1}" = '$' ]; then
+            idx=$((name_offset - 3))
+        else
+            return 1
+        fi
+
+        if [ "$idx" -ge 0 ] && [ "${text:$idx:1}" = '$' ]; then
+            return 1
+        fi
+        backslashes=0
+        while [ "$idx" -ge 0 ] && [ "${text:$idx:1}" = "\\" ]; do
+            backslashes=$((backslashes + 1))
+            idx=$((idx - 1))
+        done
+        [ $((backslashes % 2)) -eq 0 ] || return 1
+    done
+
+    [ -n "$assign_seen" ]
+}
+
+_guard_finalize_vars() {
+    local text=$1 i=0 count=${#_collect_names[@]}
+    local fn_re='(^|[^A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*[[:blank:]]*\([[:blank:]]*\)'
+    local ifs_re='(^|[^A-Za-z0-9_])IFS([^A-Za-z0-9_]|$)'
+    [ -z "$_collect_unbalanced" ] || return 0
+    [ -z "$_collect_forbidden" ] || return 0
+    [ "$count" -gt 0 ] || return 0
+    if [[ $text =~ $fn_re ]] || [[ $text =~ $ifs_re ]]; then
+        return 0
+    fi
+    while [ "$i" -lt "$count" ]; do
+        if [ -z "${_collect_bad[$i]}" ] && _guard_var_valid "${_collect_names[$i]}" "$text"; then
+            GUARD_VAR_NAMES+=("${_collect_names[$i]}")
+            GUARD_VAR_VALUES+=("${_collect_values[$i]}")
+        fi
+        i=$((i + 1))
+    done
+}
+
+_guard_reset_scan_state() {
     GUARD_WORDS=()
     GUARD_EXPANDED=()
     GUARD_ARGS=()
     GUARD_BARE_WORD=""
     GUARD_UNBALANCED=""
+    GUARD_UNPARSED_CAUSE=""
     GUARD_DATA=""
     GUARD_DIR=""
-    GUARD_CWD=$3
+    GUARD_CWD=$1
     GUARD_CWD_LOST=""
     GUARD_GIT_ENV=""
     GUARD_BUILTINS=""
     GUARD_SUBSHELL=""
+    GUARD_PREV_SEP=""
+    GUARD_FIRST_QUOTED_NAME=""
+}
+
+guard_scan() {
+    local text=$2 suffix
+    local _collect_names=() _collect_values=() _collect_bad=() _collect_forbidden="" _collect_unbalanced=""
+    if [[ $text =~ ^[[:blank:]]*python3[[:blank:]] ]] &&
+        suffix=$(python3 -I -S "${BASH_SOURCE[0]%/*}/python-text-stdin.py" "$3" <<<"$text"); then
+        text=$suffix
+    fi
+    GUARD_VAR_NAMES=()
+    GUARD_VAR_VALUES=()
     text=${text//\\$'\n'/}
+    _guard_reset_scan_state "$3"
+    _guard_scan_stream _guard_collect_segment "" 3<<<"$text"
+    _guard_finalize_vars "$text"
+    _guard_reset_scan_state "$3"
     _guard_scan_stream "$1" "" 3<<<"$text"
 }
 

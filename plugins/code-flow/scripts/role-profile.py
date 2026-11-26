@@ -327,9 +327,13 @@ def main():
     started = time.monotonic()
     status = 'fail'
     role = model = None
+    recorded = True
     parser = Parser(description='Resolve the effective bundled role contract for a harness.')
-    parser.add_argument('--harness', required=True)
-    parser.add_argument('--role', required=True)
+    parser.add_argument('--list-harnesses', action='store_true',
+                        help='emit the accepted --harness ids as JSON and exit 0; takes no '
+                             '--harness or --role and records no metrics event')
+    parser.add_argument('--harness')
+    parser.add_argument('--role')
     parser.add_argument('--gate-report', type=Path, metavar='PATH',
                         help='style-gate report carried by the dispatch; for style-reviewer a '
                              'verified report resolves effort to low, any other outcome keeps '
@@ -348,6 +352,12 @@ def main():
     try:
         try:
             args = parser.parse_args()
+            if args.list_harnesses:
+                recorded = False
+                print(json.dumps({'harnesses': sorted(RoleProfiles().profiles)}, ensure_ascii=False))
+                return 0
+            if args.harness is None or args.role is None:
+                raise ValueError('--harness and --role are required')
             role = args.role
             roles = parse_roles(args.role)
             resolver = RoleProfiles()
@@ -377,7 +387,8 @@ def main():
         status = 'ok'
         return 0
     finally:
-        _record_run(status, started, role, model)
+        if recorded:
+            _record_run(status, started, role, model)
 
 
 if __name__ == '__main__':

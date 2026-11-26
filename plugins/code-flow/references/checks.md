@@ -32,6 +32,7 @@ Discovery and execution of a repository's own checks for a workflow that runs th
 - The coordinator selects checks; `tool-runner` only discovers commands for a named suite and executes what it is given, validating reuse evidence before accepting it.
 - Selection proceeds in order:
   1. checks explicitly required by repository instructions or the accepted plan — acceptance, security, migration, packaging, and project-mandated checks run even when broad;
+     - Full suites in an accepted plan's `## Verification` section belong to the full-suite and integration tier. Full suites that repository instructions require also belong to that tier. A step's declared `test` is not part of that tier. It still runs in its per-step run, as `<package>/skills/plan-do/SKILL.md` requires. Every check run except the last readiness gate leaves out the full-suite and integration tier. Only that last readiness gate runs that tier. The excluded runs are per-step runs, the plan-do completion run, and each run of closeout Run step 3. Those runs use the narrowest checks from item 2. See `## Reuse within a run` for the once-only rule.
   2. the narrowest available checks covering the changed behavior;
   3. integration or full-suite checks only when changed paths cross component boundaries, coverage cannot be mapped confidently, shared workflow or configuration contracts change, or a required gate says so.
 - Coverage uncertainty resolves by progressive expansion: from the narrowest plausible suite to broader suites, with the full suite only as the last resort.

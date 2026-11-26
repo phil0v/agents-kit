@@ -2,7 +2,9 @@
 
 The GitHub repository `phil0v/agents-kit` hosts the `phil0v` marketplace with
 the four packages: `code-quality`, `code-flow`, `local-guards`, and
-`usage-metrics`. Claude Code, Codex, and Pi install from GitHub without a clone.
+`usage-metrics`. The `agy-agents` package carries the Antigravity agent
+forms for `code-flow`; Antigravity installs it from a clone. Claude Code, Codex,
+and Pi install from GitHub without a clone.
 Antigravity, Empryo, Delta, and the `~/.agents/skills/` readers need a local
 clone. Workflow execution also requires the harness capabilities below.
 
@@ -188,8 +190,9 @@ Operators supply tables that contain subscription-specific model ids. See
 
 ### Antigravity
 
-Antigravity (`agy` 1.5.14+) loads `code-quality`, `code-flow`, `local-guards`,
-and `usage-metrics` as copied installations or directly from the clone through
+Antigravity (`agy` 1.5.14+) loads `code-quality`, `code-flow`,
+`agy-agents`, `local-guards`, and `usage-metrics`
+as copied installations or directly from the clone through
 JSON configuration.
 
 #### Copied plugin installation
@@ -200,18 +203,20 @@ clone:
 ```sh
 agy plugin install ./plugins/code-quality
 agy plugin install ./plugins/code-flow
+agy plugin install ./plugins/agy-agents
 agy plugin install ./plugins/local-guards
 agy plugin install ./plugins/usage-metrics
 ```
 
 `agy plugin install` copies each plugin into `~/.gemini/config/plugins/<name>/`.
-After `git pull`, run those four `agy plugin install` commands
+After `git pull`, run those five `agy plugin install` commands
 again to update the copied plugins. `local-guards` uses
 `plugins/local-guards/.antigravity-plugin/plugin.json` and root
 `plugins/local-guards/hooks.json`. Root `plugin.json` stays absent in
 `local-guards`, so Codex keeps loading `.codex-plugin/plugin.json`. `code-flow`
 ships its edit checks in root `plugins/code-flow/hooks.json` under the `code-flow`
-key.
+key. The `agy-agents` package carries the six agent forms;
+Antigravity discovers them through the package's `agents/` folder.
 `usage-metrics` adds no agents or hooks of its own. Install it to keep the
 recorder adjacent to the installed `local-guards` and `code-flow` copies. Its
 `metrics-report` skill loads globally through the `~/.agents/skills/` links.
@@ -273,15 +278,17 @@ Validate plugin manifests offline and inspect installed plugins:
 ```sh
 agy plugin validate --strict ./plugins/code-quality
 agy plugin validate --strict ./plugins/code-flow
+agy plugin validate --strict ./plugins/agy-agents
 agy plugin validate --strict ./plugins/local-guards
 agy plugin validate --strict ./plugins/usage-metrics
 agy plugin list --json
 ```
 
-`agy plugin list --json` lists `code-flow` with 9 skills and 6 `code-flow-*`
-agents (`code-flow-worker`, `code-flow-plan-reviewer`,
-`code-flow-spec-reviewer`, `code-flow-reviewer`, `code-flow-style-reviewer`,
-`code-flow-tool-runner`). Those definitions set `mainAgent: false`, so they do
+`agy plugin list --json` lists `code-flow` with 9 skills and `agy-agents`
+with the six agents
+(`worker`, `plan-reviewer`,
+`spec-reviewer`, `reviewer`, `style-reviewer`,
+`tool-runner`). Those definitions set `mainAgent: false`, so they do
 not appear in `agy agents`.
 
 Resolve `code-flow` role profiles for Antigravity. Add `--provider <id>` if you
@@ -294,7 +301,7 @@ python3 ./plugins/code-flow/scripts/role-profile.py --harness antigravity --role
 Run a one-off read-only review subagent launch with `agy --print`:
 
 ```sh
-agy --print "Invoke code-flow-reviewer read-only on the scoped diff." --print-timeout 180s --output-format stream-json
+agy --print "Invoke reviewer read-only on the scoped diff." --print-timeout 180s --output-format stream-json
 ```
 
 In a live Antigravity 1.5.14 verification, `code-flow-reviewer` ran read-only
@@ -379,9 +386,10 @@ workflow's bundled TOML roles in an arbitrary client.
 
 ## Workflow installation boundaries
 
-Keep the full package, including sibling skills, `roles/`, `agents/`,
+Keep the full package, including sibling skills, `roles/`,
 `harnesses/`, `standards/`, `references/`, `scripts/`, skill-local helpers,
-and `harnesses/mapping.json`. Resolve the loaded
+and `harnesses/mapping.json`. Antigravity dispatch additionally needs the
+`agy-agents` package. Resolve the loaded
 `SKILL.md` through symlinks before deriving its package root. The
 [packaging tests](../tests/test_skills.py) verify relative links inside
 relocated complete packages. The
@@ -399,7 +407,7 @@ not a client's discovery or live dispatch.
 | Pi, root package | Skills of all packages, `code-flow` roles, `local-guards` hooks extension, and `pi-subagents`. | Verify loaded roles, mapped provider/models, `thinking` effort, and tools. Schema and launch-path inspection covers installed `pi-subagents` 0.84.0. Live role dispatch remains unverified. |
 | Pi, roles package only (`pi install ./plugins/code-flow`) | The package manifest contributes roles, not skills. | Supply the `~/.agents/skills/` links or another verified skill-discovery source before invocation. Role installation alone does not establish discovery. Live execution remains unverified. |
 | Delta, global skills plus resolver mapping | Complete package links in `~/.agents/skills/`; `--harness delta` resolves runtime-default profiles without forms. | Dispatch requires Delta's subthread spawn with role-matched profiles. A smoke dispatch verified profile selection, tool grants, and handback. Full workflow execution remains unverified. |
-| Antigravity, plugin (`agy plugin install` or `plugins.json`) | Complete package skills, `local-guards` and `code-flow` hooks, and 6 `code-flow-*` subagents (`--harness antigravity`). | A one-off `agy --print` launch with `code-flow-reviewer` ran read-only using `read_file`, `run_command`, `manage_task`, and `send_message`, with no `write_file` or `edit_file`. `local-guards` `PreToolUse` hooks blocked `git push` and wrote branch backup refs; edit checks validated config files before they moved to `code-flow`. `PostToolUse` `stderr` diagnostics do not reach the agent in Antigravity 1.5.14. Full delegated workflows remain unverified. |
+| Antigravity, plugin (`agy plugin install` or `plugins.json`) | Complete package skills, `local-guards` and `code-flow` hooks, and the six subagents of the `agy-agents` package (`--harness antigravity`). | A one-off `agy --print` launch with `code-flow-reviewer` ran read-only using `read_file`, `run_command`, `manage_task`, and `send_message`, with no `write_file` or `edit_file`. `local-guards` `PreToolUse` hooks blocked `git push` and wrote branch backup refs; edit checks validated config files before they moved to `code-flow`. `PostToolUse` `stderr` diagnostics do not reach the agent in Antigravity 1.5.14. Full delegated workflows remain unverified. |
 | Empryo, agent symlinks (`~/.empryo/agents/`) | File symlinks to `plugins/code-flow/harnesses/empryo/code-flow-*.md`. | Registration and headless discovery passed for all six `code-flow-*` agents. Execution is blocked on Empryo 3.14.2-beta because `code-flow-reviewer` (`mode: explore`) denies shell execution for `git --no-pager diff`. Empryo remains unlisted in `harnesses/mapping.json`. |
 | Other skill readers / portable plugins | Reader-specific discovery plus the full package closure. | A verified adapter must start fresh independent agents, select required models and supported effort, and return complete handbacks. It must also apply canonical instructions and declared tools. A missing required capability blocks execution, and unavailable probes remain unverified. |
 | Individual workflow directory | Discoverable skill text may exist without its package. | This layout is unsupported because sibling workflows, roles, references, or scripts are missing. A broken skill link cannot resolve the skill. |
@@ -472,6 +480,7 @@ claude plugin update usage-metrics@phil0v
 pi update --extensions
 agy plugin install ./plugins/code-quality
 agy plugin install ./plugins/code-flow
+agy plugin install ./plugins/agy-agents
 agy plugin install ./plugins/local-guards
 agy plugin install ./plugins/usage-metrics
 ```

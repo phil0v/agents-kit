@@ -449,21 +449,22 @@ class AgentFormsTest(unittest.TestCase):
 
     def test_antigravity_forms_match_resolved_profiles_and_canonical_bodies(self):
         native = load_script_module(ROOT / 'tools/native_agent_forms.py', 'native_agent_forms')
+        forms_package = ROOT.parent / 'agy-agents'
         forms = {
-            name: native.form_path(ROOT, 'antigravity', name)
+            name: native.form_path(forms_package, 'antigravity', name)
             for name in self.roles
         }
         for name, role in self.roles.items():
             with self.subTest(role=name):
                 path = forms[name]
                 self.assertTrue(path.is_file(), path)
-                self.assertEqual(path.parent, ROOT / 'agents')
-                self.assertEqual(path.name, f'code-flow-{name}.md')
+                self.assertEqual(path.parent, forms_package / 'agents')
+                self.assertEqual(path.name, f'{name}.md')
                 result = self.resolve_profile('antigravity', name)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 profile = json.loads(result.stdout)
                 frontmatter, body = self.parse_form(path)
-                self.assertEqual(json.loads(frontmatter['name']), f'code-flow-{name}')
+                self.assertEqual(json.loads(frontmatter['name']), name)
                 self.assertEqual(json.loads(frontmatter['description']), role['description'])
                 self.assertEqual(json.loads(frontmatter['model']), 'inherit')
                 self.assertEqual(frontmatter['subagent'], 'true')
@@ -475,44 +476,58 @@ class AgentFormsTest(unittest.TestCase):
                 self.assertEqual(body, role['developer_instructions'].strip('\n'))
 
     def test_native_client_check_detects_stale_missing_and_extra_forms_and_preserves_unmanaged_files(self):
-        for client, rel_dir, toml_dir in (('antigravity', 'agents', 'roles'), ('empryo', 'harnesses/empryo', None)):
+        cases = (
+            ('antigravity', 'agents', 'reviewer.md', 'retired.md', True),
+            ('empryo', 'harnesses/empryo', 'code-flow-reviewer.md', 'code-flow-retired.md', False),
+        )
+        for client, rel_dir, filename, retired_name, owns_directory in cases:
             with self.subTest(client=client), tempfile.TemporaryDirectory() as directory:
                 package = self.copy_package(directory)
-                target_dir = package / rel_dir
-                unmanaged = target_dir / 'README.md'
-                unmanaged.write_text('# Unmanaged documentation\n')
-                toml_before = (package / toml_dir / 'reviewer.toml').read_bytes() if toml_dir else None
+                target_dir = (package.parent / 'agy-agents' / 'agents' if client == 'antigravity'
+                              else package / rel_dir)
+                report_prefix = ('../agy-agents/agents' if client == 'antigravity'
+                                 else rel_dir)
+                toml_before = (package / 'roles/reviewer.toml').read_bytes()
 
                 check = subprocess.run([sys.executable, str(package / 'tools/sync-agents.py'), '--check'],
                                        capture_output=True, text=True)
                 self.assertEqual(check.returncode, 0, check.stderr)
 
-                target = target_dir / 'code-flow-reviewer.md'
+                unmanaged = target_dir / 'README.md'
+                unmanaged.write_text('# Unmanaged documentation\n')
+                target = target_dir / filename
                 target.write_text('drifted\n')
-                retired = target_dir / 'code-flow-retired.md'
-                retired.write_text('---\nname: "code-flow-retired"\n---\nbody\n')
+                retired = target_dir / retired_name
+                retired.write_text('---\nname: "retired"\n---\nbody\n')
 
                 stale_check = subprocess.run([sys.executable, str(package / 'tools/sync-agents.py'), '--check'],
                                              capture_output=True, text=True)
                 self.assertEqual(stale_check.returncode, 1)
-                self.assertIn(f'{rel_dir}/code-flow-reviewer.md', stale_check.stderr)
-                self.assertIn(f'{rel_dir}/code-flow-retired.md', stale_check.stderr)
-                self.assertNotIn('README.md', stale_check.stderr)
+                self.assertIn(f'{report_prefix}/{filename}', stale_check.stderr)
+                self.assertIn(f'{report_prefix}/{retired_name}', stale_check.stderr)
+                if owns_directory:
+                    self.assertIn('README.md', stale_check.stderr)
+                else:
+                    self.assertNotIn('README.md', stale_check.stderr)
 
                 sync = subprocess.run([sys.executable, str(package / 'tools/sync-agents.py')],
                                       capture_output=True, text=True)
                 self.assertEqual(sync.returncode, 0, sync.stderr)
                 self.assertFalse(retired.exists())
-                self.assertEqual(unmanaged.read_text(), '# Unmanaged documentation\n')
-                if toml_dir:
-                    self.assertEqual((package / toml_dir / 'reviewer.toml').read_bytes(), toml_before)
-                self.assertEqual(target.read_text(), (ROOT / rel_dir / 'code-flow-reviewer.md').read_text())
+                if owns_directory:
+                    self.assertFalse(unmanaged.exists())
+                else:
+                    self.assertEqual(unmanaged.read_text(), '# Unmanaged documentation\n')
+                self.assertEqual((package / 'roles/reviewer.toml').read_bytes(), toml_before)
+                expected = (ROOT.parent / 'agy-agents' / 'agents' / filename if client == 'antigravity'
+                            else ROOT / rel_dir / filename)
+                self.assertEqual(target.read_text(), expected.read_text())
 
                 target.unlink()
                 missing_check = subprocess.run([sys.executable, str(package / 'tools/sync-agents.py'), '--check'],
                                                capture_output=True, text=True)
                 self.assertEqual(missing_check.returncode, 1)
-                self.assertIn(f'{rel_dir}/code-flow-reviewer.md', missing_check.stderr)
+                self.assertIn(f'{report_prefix}/{filename}', missing_check.stderr)
 
     def test_diverged_harness_capability_sets_fail_before_writing(self):
         def add_unknown_capability(package, mapping):
@@ -594,7 +609,8 @@ class AgentFormsTest(unittest.TestCase):
             sync = subprocess.run([sys.executable, str(package / 'tools/sync-agents.py')],
                                   capture_output=True, text=True)
             self.assertEqual(sync.returncode, 0, sync.stderr)
-            frontmatter, _ = self.parse_form(package / 'agents/code-flow-reviewer.md')
+            frontmatter, _ = self.parse_form(
+                package.parent / 'agy-agents' / 'agents' / 'reviewer.md')
             self.assertEqual(json.loads(frontmatter['model']), 'acme/reviewer-model')
             self.assertNotIn('effort', frontmatter)
             self.assertNotIn('thinking', frontmatter)

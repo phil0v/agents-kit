@@ -206,7 +206,7 @@ class SpecListTests(unittest.TestCase):
         result = self.run_script(env=env)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
-        self.assertTrue(result.stdout.startswith("12 active changes\n\n"))
+        self.assertTrue(result.stdout.startswith("11 active changes\n\n"))
 
         groups, errors = self.parse_output(result.stdout)
         self.assertEqual(errors, ["grace: .openspec.yaml has invalid created date"])
@@ -218,7 +218,7 @@ class SpecListTests(unittest.TestCase):
         )
         self.assertEqual(
             self.change_names(groups["Not started"]),
-            ["dave", "no_tasks", "longsum", "no_why", "frank", "grace", "eve"],
+            ["eve", "dave", "no_tasks", "longsum", "no_why", "frank", "grace"],
         )
         self.assertEqual(self.change_names(groups["Ready to archive"]), ["heidi"])
         self.assertEqual(self.change_names(groups["Draft"]), ["ivan"])
@@ -252,7 +252,7 @@ class SpecListTests(unittest.TestCase):
 
         self.assertEqual(
             self.change_names(groups["Not started"]),
-            ["dave", "no_tasks", "longsum", "no_why", "frank", "grace", "eve"],
+            ["eve", "dave", "no_tasks", "longsum", "no_why", "frank", "grace"],
         )
 
         self.assertEqual(
@@ -295,7 +295,7 @@ class SpecListTests(unittest.TestCase):
         result = self.run_script(env=env, args=["--short"])
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
-        self.assertTrue(result.stdout.startswith("12 active changes\n\n"))
+        self.assertTrue(result.stdout.startswith("11 active changes\n\n"))
 
         groups, errors = self.parse_output(result.stdout)
         self.assertEqual(errors, ["grace: .openspec.yaml has invalid created date"])
@@ -304,7 +304,7 @@ class SpecListTests(unittest.TestCase):
         self.assertEqual(groups["In progress"], ["alice", "charlie", "bob"])
         self.assertEqual(
             groups["Not started"],
-            ["dave", "no_tasks", "longsum", "no_why", "frank", "grace", "eve"],
+            ["eve", "dave", "no_tasks", "longsum", "no_why", "frank", "grace"],
         )
         self.assertEqual(groups["Ready to archive"], ["heidi"])
         self.assertEqual(groups["Draft"], ["ivan"])
@@ -333,7 +333,7 @@ class SpecListTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(
             result.stdout,
-            "alice charlie bob dave no_tasks longsum no_why frank grace eve\n",
+            "alice charlie bob eve dave no_tasks longsum no_why frank grace\n",
         )
 
     def test_batch_splits_into_valid_lines_on_capability_conflicts(self):
@@ -353,7 +353,7 @@ class SpecListTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertEqual(
             result.stdout,
-            "alice\ncharlie bob dave no_tasks longsum no_why frank grace eve\n",
+            "alice\ncharlie bob eve dave no_tasks longsum no_why frank grace\n",
         )
 
     def test_listing_mode_flags_are_mutually_exclusive(self):
@@ -808,6 +808,7 @@ class SpecListTests(unittest.TestCase):
         env["PATH"] = "/usr/bin" + os.pathsep + "/bin"
         result = self.run_script(env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.startswith("3 active changes\n\n"))
         groups, errors = self.parse_output(result.stdout)
         self.assertEqual(
             self.change_names(groups["Draft"]),

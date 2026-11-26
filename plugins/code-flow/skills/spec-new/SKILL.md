@@ -36,7 +36,9 @@ Follow the generated `openspec-propose` skill exactly — scaffold with `openspe
 
 ## Validation
 
-Run `openspec validate <name> --strict` before every review round and after every artifact correction, keeping the command and its output as evidence. A failed validation is corrected in the artifacts and re-run before any dispatch.
+Run `openspec validate <name> --strict` before every review round and after every artifact correction, keeping the command and its output as evidence. A failed validation is corrected in the artifacts and re-run before any dispatch. After a correction that renames or moves a term — a requirement, a mechanism, a filter — grep the change directory for the superseded terms and update every stale cross-reference before validating; a zero-hit grep is part of the evidence.
+
+Before every review dispatch, verify the artifacts mechanically in two checks. Anchor check: grep every `file:line` anchor an artifact cites against the code and correct each stale anchor in its artifact. Red-path trace: follow each task's red/green claim through the test scaffold it names — test class and base type, mock factories, fixture transaction semantics, methods the change adds — and fold the demanded adaptation into the tasks.
 
 ## Review
 
@@ -44,7 +46,7 @@ Dispatch one fresh independent agent on the spec-reviewer profile per round, per
 
 Findings stay inline. Resolve them by editing the artifacts, then rerun strict validation and dispatch a follow-up covering the changed artifacts, plus whole-change coverage when a requirement changed.
 
-Allow at most two correction rounds. When the limit is exhausted with converging findings — the latest round introduced no new finding category — present the remaining findings and a proposed ruling for each to the user; explicit approval authorizes one further correction round at a time, repeatable per approval while findings keep converging. Otherwise unresolved findings leave the change an explicitly unready draft with no clean receipt. Only the exact response `verdict: clean` from a complete review closes the round clean.
+Allow at most two correction rounds. When the limit is exhausted with converging findings — the latest round introduced no new finding category — present the remaining findings and a proposed ruling for each to the user; explicit approval authorizes further correction rounds, and one approval may cover a batch of them: every round in the batch applies only fixes the findings prescribe verbatim, reruns strict validation, and dispatches a follow-up review. Return to per-round approval when a round produces a finding outside the prescription or a new finding category. Otherwise unresolved findings leave the change an explicitly unready draft with no clean receipt. Only the exact response `verdict: clean` from a complete review closes the round clean.
 
 ## Finish
 

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -22,7 +23,14 @@ BLOCK_BUDGET = 12
 BLOCK_WORDS = 150
 CHECKS_HEADING = "## Checks"
 INDEX_LINES = ("Done:", "Frameworks:")
-RULES_ORDER = ("## Checks", "## Ownership", "## Approaches", "## Code style", "## Design", "## Framework")
+RULES_ORDER = (
+    "## Checks",
+    "## Ownership",
+    "## Approaches",
+    "## Code style",
+    "## Design",
+    "## Framework",
+)
 MIN_GIT = (2, 31)
 MIN_PYTHON = (3, 9)
 
@@ -31,7 +39,10 @@ def _load_fences():
     source = Path(__file__).resolve().with_name("markdown_fences.py")
     spec = importlib.util.spec_from_file_location("_project_rules_fences", source)
     module = importlib.util.module_from_spec(spec)
-    exec(compile(source.read_bytes(), str(source), "exec", dont_inherit=True), module.__dict__)
+    exec(
+        compile(source.read_bytes(), str(source), "exec", dont_inherit=True),
+        module.__dict__,
+    )
     return module
 
 
@@ -53,6 +64,57 @@ _GIT_CHILD_KEYS = ("PATH", "HOME", "SystemRoot")
 _GIT_TIMEOUT = 20
 _GIT_VERSION = re.compile(r"git version (\d+)\.(\d+)(?:\.(\d+))?")
 _IGNORE_LINE = re.compile(r"(?P<source>.*):(?P<line>\d+):(?P<pattern>.*)\t(?P<path>.*)")
+STYLE_GATE = ".style-gate.json"
+_HOST_USER_PATH = re.compile(r"/(?:Users|home)/[^\s/]+/")
+_DOCKER_EXEC_TTY = "docker exec must not use interactive TTY flags (-it or -ti)"
+_COMPOSE_EXEC_TTY = "docker compose exec must pass -T"
+_SHELL_OPERATOR_CHARS = frozenset("();<>|&")
+_FALLBACK_TOKEN = re.compile(r"[();<>|&]+|[^\s();<>|&]+")
+_SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh"})
+_SHELL_NESTING = 3
+_SHELL_VALUED_LONG_OPTIONS = frozenset({"--rcfile", "--init-file"})
+_DOCKER_GLOBAL_VALUES = frozenset(
+    {
+        "-c",
+        "--config",
+        "--context",
+        "-H",
+        "--host",
+        "-l",
+        "--log-level",
+        "--tlscacert",
+        "--tlscert",
+        "--tlskey",
+    }
+)
+_COMPOSE_GLOBAL_VALUES = frozenset(
+    {
+        "-f",
+        "--file",
+        "-p",
+        "--project-name",
+        "--project-directory",
+        "--env-file",
+        "--profile",
+        "--ansi",
+        "--parallel",
+        "--progress",
+    }
+)
+_DOCKER_EXEC_VALUES = frozenset(
+    {"-e", "--env", "--env-file", "-u", "--user", "-w", "--workdir", "--detach-keys"}
+)
+_COMPOSE_EXEC_VALUES = frozenset(
+    {"-e", "--env", "-u", "--user", "-w", "--workdir", "--index"}
+)
+_READ_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+    | getattr(os, "O_BINARY", 0)
+)
+_SKIP_WALK_DIRS = frozenset({".git", "node_modules", "vendor"})
+_NESTED_RULE_FILES = frozenset({"AGENTS.md", "CLAUDE.md"})
 
 
 def _escaped(text: str, offset: int) -> bool:
@@ -77,21 +139,27 @@ def _visible_ranges(lines: list[str], offsets: list[int]) -> Iterator[tuple[int,
 
 
 def _marker_positions(
-    text: str, ranges: list[tuple[int, int]], offsets: list[int],
+    text: str,
+    ranges: list[tuple[int, int]],
+    offsets: list[int],
 ) -> tuple[list[int], tuple[int, int] | None]:
     markers = []
     for start, end in ranges:
         for match in _MARKERS.finditer(text, start, end):
             line = bisect_right(offsets, match.start())
-            body = text[offsets[line - 1]:offsets[line]].removesuffix("\n")
+            body = text[offsets[line - 1] : offsets[line]].removesuffix("\n")
             if body.strip(" \t") != match[0]:
-                raise ValueError(f"line {line}: project-rules marker must be standalone")
+                raise ValueError(
+                    f"line {line}: project-rules marker must be standalone"
+                )
             markers.append((match[0], match.start(), line))
     if not markers:
         return [], None
     if len(markers) != 2 or markers[0][0] == markers[1][0]:
         line = markers[1][2] if len(markers) > 1 else markers[0][2]
-        raise ValueError(f"line {line}: expected one begin and one end marker (unpaired or duplicate markers)")
+        raise ValueError(
+            f"line {line}: expected one begin and one end marker (unpaired or duplicate markers)"
+        )
     if markers[0][0] != BEGIN:
         raise ValueError(f"line {markers[0][2]}: out-of-order project-rules markers")
     return [markers[0][1], markers[1][1]], (markers[0][2], markers[1][2])
@@ -107,7 +175,10 @@ def _code_span_end(text: str, run: re.Match, end: int) -> int:
 
 
 def _mask_inline(
-    text: str, ranges: list[tuple[int, int]], markers: list[int], offsets: list[int],
+    text: str,
+    ranges: list[tuple[int, int]],
+    markers: list[int],
+    offsets: list[int],
 ) -> Iterator[tuple[int, int, int]]:
     comment = None
     for start, end in ranges:
@@ -120,9 +191,13 @@ def _mask_inline(
                 if marker < len(markers) and markers[marker] < stop:
                     if markers[0] < comment < markers[1]:
                         line = bisect_right(offsets, comment)
-                        raise ValueError(f"line {line}: unclosed HTML comment before the end marker")
+                        raise ValueError(
+                            f"line {line}: unclosed HTML comment before the end marker"
+                        )
                     line = bisect_right(offsets, markers[marker])
-                    raise ValueError(f"line {line}: HTML comment overlaps a project-rules marker")
+                    raise ValueError(
+                        f"line {line}: HTML comment overlaps a project-rules marker"
+                    )
                 if closer >= 0:
                     comment = None
                 visible = cursor = stop
@@ -146,7 +221,9 @@ def _mask_inline(
             visible = cursor
         if comment is not None and markers and markers[0] < comment < markers[1]:
             line = bisect_right(offsets, comment)
-            raise ValueError(f"line {line}: unclosed HTML comment in the project-rules block")
+            raise ValueError(
+                f"line {line}: unclosed HTML comment in the project-rules block"
+            )
         if visible < end:
             yield visible, end, end
 
@@ -179,7 +256,10 @@ def _destination_end(text: str, start: int, end: int) -> int:
 
 
 def _index_links(
-    text: str, ranges: list[tuple[int, int, int]], start: int, end: int,
+    text: str,
+    ranges: list[tuple[int, int, int]],
+    start: int,
+    end: int,
 ) -> Iterator[tuple[int, str, bool]]:
     cursor = start
     for visible, limit, section_end in ranges:
@@ -189,7 +269,9 @@ def _index_links(
             cursor = match.end()
             if _escaped(text, match.start()):
                 continue
-            if text[match.start() - 1:match.start()] == "!" and not _escaped(text, match.start() - 1):
+            if text[match.start() - 1 : match.start()] == "!" and not _escaped(
+                text, match.start() - 1
+            ):
                 newline = text.find("\n", cursor, limit)
                 image_limit = limit if newline < 0 else newline
                 image_end = _destination_end(text, cursor, image_limit)
@@ -199,7 +281,11 @@ def _index_links(
             stop = _destination_end(text, cursor, min(section_end, end))
             destination = text[cursor:stop]
             cursor = stop + 1
-            yield match.start(), destination, stop < limit and bool(_BARE_FIELD.fullmatch(destination))
+            yield (
+                match.start(),
+                destination,
+                stop < limit and bool(_BARE_FIELD.fullmatch(destination)),
+            )
 
 
 def _qualified(path: str) -> bool:
@@ -208,7 +294,11 @@ def _qualified(path: str) -> bool:
 
 
 def _valid_destination(path: str) -> bool:
-    return bool(_RELATIVE_DESTINATION.fullmatch(path) and not path.startswith("/") and not _ENTITY.search(path))
+    return bool(
+        _RELATIVE_DESTINATION.fullmatch(path)
+        and not path.startswith("/")
+        and not _ENTITY.search(path)
+    )
 
 
 def _requires_directory(path: str) -> bool:
@@ -228,8 +318,9 @@ def _metadata(path: Path) -> os.stat_result | None:
         entry = path.lstat()
     except FileNotFoundError:
         return None
-    if (getattr(entry, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
-            and not stat.S_ISLNK(entry.st_mode)):
+    if getattr(
+        entry, "st_file_attributes", 0
+    ) & stat.FILE_ATTRIBUTE_REPARSE_POINT and not stat.S_ISLNK(entry.st_mode):
         raise _PathFinding("path contains a redirecting reparse point")
     return entry
 
@@ -250,7 +341,10 @@ def _listed_spelling(path: Path, listings: dict[Path, list[str]]) -> str | None:
 
 
 def _resolve_contained(
-    root: Path, base: Path, path: Path, strict_case: bool = False,
+    root: Path,
+    base: Path,
+    path: Path,
+    strict_case: bool = False,
 ) -> tuple[Path, os.stat_result | None, bool]:
     pending = [(component, False) for component in reversed(path.parts)]
     current = base
@@ -273,7 +367,9 @@ def _resolve_contained(
         if strict_case and not exempt:
             existing = _listed_spelling(current, listings)
             if existing is not None:
-                raise _PathFinding(f"component {component!r} differs in case from existing {existing!r}")
+                raise _PathFinding(
+                    f"component {component!r} differs in case from existing {existing!r}"
+                )
         if entry is None:
             has_missing_component = True
             continue
@@ -320,8 +416,15 @@ def _shares_index_slot(root: Path, component: str) -> bool:
 
 
 def _select_rules(root: Path, selected: str) -> tuple[Path, str]:
-    if not selected or _qualified(selected) or selected.startswith("-") or "#" in selected:
-        raise _PathFinding("expected a repository-relative file path without a leading '-' or '#'")
+    if (
+        not selected
+        or _qualified(selected)
+        or selected.startswith("-")
+        or "#" in selected
+    ):
+        raise _PathFinding(
+            "expected a repository-relative file path without a leading '-' or '#'"
+        )
     if any(component.casefold() == ".git" for component in Path(selected).parts):
         raise _PathFinding(".git is reserved")
     target = Path(selected)
@@ -330,7 +433,9 @@ def _select_rules(root: Path, selected: str) -> tuple[Path, str]:
         raise _PathFinding("path component would reset or escape project root")
     resolved = parent / target.name
     if (existing := _listed_spelling(resolved, {})) is not None:
-        raise _PathFinding(f"component {target.name!r} differs in case from existing {existing!r}")
+        raise _PathFinding(
+            f"component {target.name!r} differs in case from existing {existing!r}"
+        )
     try:
         entry = resolved.lstat()
     except FileNotFoundError:
@@ -347,7 +452,11 @@ def _select_rules(root: Path, selected: str) -> tuple[Path, str]:
         raise _PathFinding(f"file/directory collision with {INDEX}")
     if not _valid_destination(posix):
         raise _PathFinding(f"destination grammar rejects {posix!r}")
-    if entry is not None and not stat.S_ISLNK(entry.st_mode) and not stat.S_ISREG(entry.st_mode):
+    if (
+        entry is not None
+        and not stat.S_ISLNK(entry.st_mode)
+        and not stat.S_ISREG(entry.st_mode)
+    ):
         raise _PathFinding("not a regular file")
     return resolved, posix
 
@@ -368,7 +477,9 @@ def _case_collision(path: Path, directory_entries: dict[Path, list[str]]) -> str
     return next((entry for entry in entries if entry.casefold() == folded), None)
 
 
-def _slots(root: Path, rules_path: Path) -> tuple[dict[Path, os.stat_result], list[str]]:
+def _slots(
+    root: Path, rules_path: Path
+) -> tuple[dict[Path, os.stat_result], list[str]]:
     entries: dict[Path, os.stat_result] = {}
     findings = []
     for path in (root / INDEX, rules_path):
@@ -376,8 +487,11 @@ def _slots(root: Path, rules_path: Path) -> tuple[dict[Path, os.stat_result], li
         try:
             entry = _metadata(path)
             if entry is not None and not stat.S_ISREG(entry.st_mode):
-                raise _PathFinding("managed path is a symlink" if stat.S_ISLNK(entry.st_mode)
-                                   else "managed path is not a regular file")
+                raise _PathFinding(
+                    "managed path is a symlink"
+                    if stat.S_ISLNK(entry.st_mode)
+                    else "managed path is not a regular file"
+                )
         except (OSError, ValueError) as error:
             findings.append(f"{relative}: {error}")
             continue
@@ -387,27 +501,44 @@ def _slots(root: Path, rules_path: Path) -> tuple[dict[Path, os.stat_result], li
     for path in list(entries):
         collision = _case_collision(path, directory_entries)
         if collision is not None:
-            findings.append(f"{path.relative_to(root).as_posix()}: case collision with {collision!r}")
+            findings.append(
+                f"{path.relative_to(root).as_posix()}: case collision with {collision!r}"
+            )
             del entries[path]
     return entries, findings
 
 
-def _read_managed(root: Path, path: Path, expected: os.stat_result) -> str:
-    try:
-        resolved, entry, missing = _resolve_contained(root, root, path.relative_to(root))
-    except _PathFinding as error:
-        raise OSError(f"managed path changed after preflight: {error}") from None
-    if resolved != path or missing or entry is None or not os.path.samestat(entry, expected):
-        raise OSError("managed path changed after preflight")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
-    with os.fdopen(os.open(path, flags), encoding="utf-8") as stream:
+def _read_same_file(path: Path, expected: os.stat_result) -> str | None:
+    with os.fdopen(os.open(path, _READ_FLAGS), encoding="utf-8") as stream:
         opened = os.fstat(stream.fileno())
         if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, expected):
-            raise OSError("managed path changed after preflight")
+            return None
         return stream.read()
 
 
-def _document_text(root: Path, path: Path, entry: os.stat_result | None, draft_dir: Path | None) -> str:
+def _read_managed(root: Path, path: Path, expected: os.stat_result) -> str:
+    try:
+        resolved, entry, missing = _resolve_contained(
+            root, root, path.relative_to(root)
+        )
+    except _PathFinding as error:
+        raise OSError(f"managed path changed after preflight: {error}") from None
+    if (
+        resolved != path
+        or missing
+        or entry is None
+        or not os.path.samestat(entry, expected)
+    ):
+        raise OSError("managed path changed after preflight")
+    text = _read_same_file(path, expected)
+    if text is None:
+        raise OSError("managed path changed after preflight")
+    return text
+
+
+def _document_text(
+    root: Path, path: Path, entry: os.stat_result | None, draft_dir: Path | None
+) -> str:
     if draft_dir is not None:
         draft = draft_dir / path.name
         draft_entry = _metadata(draft)
@@ -423,7 +554,10 @@ def _document_text(root: Path, path: Path, entry: os.stat_result | None, draft_d
 
 
 def _resolve_local(
-    root: Path, base: Path, path: str, absent: Path | None = None,
+    root: Path,
+    base: Path,
+    path: str,
+    absent: Path | None = None,
 ) -> tuple[Path, os.stat_result | None]:
     if _qualified(path):
         raise _PathFinding("absolute or drive-qualified link target")
@@ -449,7 +583,10 @@ def _local_target(root: Path, base: Path, path: str) -> os.stat_result:
 
 
 def _index_destination(
-    root: Path, destination: str, bare: bool, rules_path: Path,
+    root: Path,
+    destination: str,
+    bare: bool,
+    rules_path: Path,
 ) -> tuple[Path, os.stat_result | None]:
     path = destination.partition("#")[0]
     if not bare:
@@ -460,13 +597,18 @@ def _index_destination(
         raise _PathFinding("absolute or drive-qualified link target")
     if _SCHEME.match(path):
         raise _PathFinding("disallowed link scheme")
-    if any(entity.start() < len(path) for entity in _ENTITY.finditer(destination)) or not _valid_destination(path):
+    if any(
+        entity.start() < len(path) for entity in _ENTITY.finditer(destination)
+    ) or not _valid_destination(path):
         raise _PathFinding("destination grammar rejects the file path")
     return _resolve_local(root, root, path, rules_path)
 
 
 def _is_rules_file(
-    resolved: Path, entry: os.stat_result | None, rules_path: Path, rules_entry: os.stat_result | None,
+    resolved: Path,
+    entry: os.stat_result | None,
+    rules_path: Path,
+    rules_entry: os.stat_result | None,
 ) -> bool:
     if entry is not None and rules_entry is not None:
         return os.path.samestat(entry, rules_entry)
@@ -474,7 +616,11 @@ def _is_rules_file(
 
 
 def _check_index(
-    root: Path, text: str, rules_path: Path, rules_rel: str, rules_entry: os.stat_result | None,
+    root: Path,
+    text: str,
+    rules_path: Path,
+    rules_rel: str,
+    rules_entry: os.stat_result | None,
 ) -> list[str]:
     try:
         text, lines, offsets, ranges, unclosed = _prepare_scan(text)
@@ -490,17 +636,30 @@ def _check_index(
     findings = []
     if unclosed is not None:
         findings.append((unclosed, "unclosed fence"))
-    block = [lines[number - 1] for number in range(begin + 1, end) if lines[number - 1].strip()]
+    block = [
+        lines[number - 1]
+        for number in range(begin + 1, end)
+        if lines[number - 1].strip()
+    ]
     if len(block) > BLOCK_BUDGET:
-        findings.append((end, f"index block has {len(block)} nonblank lines; the budget is {BLOCK_BUDGET}"))
+        findings.append(
+            (
+                end,
+                f"index block has {len(block)} nonblank lines; the budget is {BLOCK_BUDGET}",
+            )
+        )
     words = sum(len(line.split()) for line in block)
     if words > BLOCK_WORDS:
-        findings.append((end, f"index block has {words} words; the budget is {BLOCK_WORDS}"))
+        findings.append(
+            (end, f"index block has {words} words; the budget is {BLOCK_WORDS}")
+        )
     for prefix in INDEX_LINES:
         if not any(line.strip().startswith(prefix) for line in block):
             findings.append((end, f'index block has no "{prefix}" line'))
     linked = False
-    for offset, destination, bare in _index_links(text, visible, offsets[begin], offsets[end - 1]):
+    for offset, destination, bare in _index_links(
+        text, visible, offsets[begin], offsets[end - 1]
+    ):
         line = bisect_right(offsets, offset)
         try:
             resolved, entry = _index_destination(root, destination, bare, rules_path)
@@ -517,6 +676,233 @@ def _check_index(
         findings.append((end, f"missing index link to {rules_rel}"))
     findings.sort(key=lambda item: item[0])
     return [f"line {number}: {finding}" for number, finding in findings]
+
+
+def _checks_commands(lines: list[str]) -> Iterator[tuple[int, str]]:
+    fences = _fences._Fences()
+    in_checks = False
+    first = 0
+    pending = ""
+    for number, line in enumerate(lines, 1):
+        was_open = bool(fences.opener)
+        if fences.visible(number, line):
+            heading = _HEADING.fullmatch(line.rstrip("\n"))
+            if heading and heading[1] in ("#", "##"):
+                in_checks = line.strip() == CHECKS_HEADING
+        elif in_checks and was_open and fences.opener:
+            body = line.rstrip("\n")
+            first = first or number
+            command = pending + body
+            if _continues(command):
+                pending = command[:-1] + " "
+                continue
+            yield first, command
+            first, pending = 0, ""
+            continue
+        if first:
+            yield first, pending
+            first, pending = 0, ""
+    if first:
+        yield first, pending
+
+
+def _continues(command: str) -> bool:
+    trailing = len(command) - len(command.rstrip("\\"))
+    return trailing % 2 == 1 and _comment_start(command) == len(command)
+
+
+def _comment_start(command: str) -> int:
+    quote = ""
+    escaped = False
+    word_start = True
+    for index, char in enumerate(command):
+        if escaped:
+            escaped = word_start = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = ""
+        elif char in "'\"":
+            quote = char
+        elif char == "#" and word_start:
+            return index
+        word_start = (
+            not quote
+            and not escaped
+            and (char.isspace() or char in _SHELL_OPERATOR_CHARS)
+        )
+    return len(command)
+
+
+def _shell_segments(command: str) -> Iterator[list[str]]:
+    code = command[: _comment_start(command)]
+    try:
+        lexer = shlex.shlex(code, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        tokens = _FALLBACK_TOKEN.findall(code)
+    segment: list[str] = []
+    for token in tokens:
+        if token and set(token) <= _SHELL_OPERATOR_CHARS:
+            yield segment
+            segment = []
+        else:
+            segment.append(token)
+    yield segment
+
+
+def _read_options(
+    tokens: list[str], valued: frozenset[str]
+) -> tuple[set[str], list[str]]:
+    options: set[str] = set()
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        index += 1
+        if token == "--":
+            break
+        if not token.startswith("-") or token == "-":
+            return options, tokens[index - 1 :]
+        if token.startswith("--"):
+            name = token.partition("=")[0]
+            options.add(name)
+            if name in valued and "=" not in token:
+                index += 1
+            continue
+        for after, letter in enumerate(token[1:], 2):
+            options.add(f"-{letter}")
+            if f"-{letter}" in valued:
+                if after == len(token):
+                    index += 1
+                break
+    return options, tokens[index:]
+
+
+def _compose_exec_finding(tokens: list[str]) -> str | None:
+    _, rest = _read_options(tokens, _COMPOSE_GLOBAL_VALUES)
+    if rest[:1] != ["exec"]:
+        return None
+    options, _ = _read_options(rest[1:], _COMPOSE_EXEC_VALUES)
+    if options & {"-T", "--no-TTY", "--no-tty"}:
+        return None
+    return _COMPOSE_EXEC_TTY
+
+
+def _docker_exec_finding(tokens: list[str]) -> str | None:
+    _, rest = _read_options(tokens, _DOCKER_GLOBAL_VALUES)
+    if rest[:1] == ["compose"]:
+        return _compose_exec_finding(rest[1:])
+    if rest[:1] == ["container"]:
+        rest = rest[1:]
+    if rest[:1] != ["exec"]:
+        return None
+    options, _ = _read_options(rest[1:], _DOCKER_EXEC_VALUES)
+    if options & {"-i", "--interactive"} and options & {"-t", "--tty"}:
+        return _DOCKER_EXEC_TTY
+    return None
+
+
+def _shell_script(arguments: list[str]) -> str | None:
+    index = 0
+    while index < len(arguments):
+        token = arguments[index]
+        index += 1
+        if token == "--" or not token.startswith(("-", "+")):
+            return None
+        if token in _SHELL_VALUED_LONG_OPTIONS:
+            index += 1
+        elif token.startswith("--"):
+            continue
+        elif "c" in token:
+            return next(iter(arguments[index:]), None)
+        elif token[-1] in "oO":
+            index += 1
+    return None
+
+
+def _segment_tty_findings(segment: list[str], depth: int) -> set[str]:
+    for position, token in enumerate(segment):
+        program = token.rsplit("/", 1)[-1]
+        if program == "docker":
+            return {_docker_exec_finding(segment[position + 1 :])} - {None}
+        if program == "docker-compose":
+            return {_compose_exec_finding(segment[position + 1 :])} - {None}
+        if program in _SHELL_PROGRAMS and depth:
+            script = _shell_script(segment[position + 1 :])
+            if script is not None:
+                return _exec_tty_findings(script, depth - 1)
+    return set()
+
+
+def _exec_tty_findings(command: str, depth: int = _SHELL_NESTING) -> set[str]:
+    problems: set[str] = set()
+    for segment in _shell_segments(command):
+        problems |= _segment_tty_findings(segment, depth)
+    return problems
+
+
+def _checks_fence_findings(lines: list[str]) -> list[tuple[int, str]]:
+    findings: list[tuple[int, str]] = []
+    for number, command in _checks_commands(lines):
+        if _HOST_USER_PATH.search(command):
+            findings.append((number, "Checks command must not contain host user paths"))
+        problems = _exec_tty_findings(command)
+        findings.extend(
+            (number, problem)
+            for problem in (_DOCKER_EXEC_TTY, _COMPOSE_EXEC_TTY)
+            if problem in problems
+        )
+    return findings
+
+
+def _inspect_style_gate(path: Path) -> tuple[str, list[str]]:
+    try:
+        entry = _metadata(path)
+    except (OSError, ValueError) as error:
+        return "invalid", [f"{STYLE_GATE}: {error}"]
+    if entry is None:
+        return "absent", []
+    if not stat.S_ISREG(entry.st_mode):
+        return "invalid", [f"{STYLE_GATE}: not a regular file"]
+    try:
+        raw = _read_same_file(path, entry)
+    except UnicodeError:
+        return "invalid", [f"{STYLE_GATE}: invalid UTF-8"]
+    except OSError as error:
+        return "invalid", [f"{STYLE_GATE}: cannot read file: {error}"]
+    if raw is None:
+        return "invalid", [f"{STYLE_GATE}: not a regular file"]
+    try:
+        data = json.loads(raw)
+    except ValueError as error:
+        return "invalid", [f"{STYLE_GATE}: invalid JSON: {error}"]
+    if not isinstance(data, dict) or not isinstance(data.get("tools"), dict):
+        return "invalid", [f'{STYLE_GATE}: missing "tools" object']
+    findings: list[str] = []
+    for name, settings in data["tools"].items():
+        if not isinstance(settings, dict):
+            findings.append(f"{STYLE_GATE}: tools.{name} must be an object")
+            continue
+        for key in ("write", "check"):
+            template = settings.get(key)
+            if template is None:
+                continue
+            if not isinstance(template, list) or not all(
+                isinstance(item, str) for item in template
+            ):
+                findings.append(
+                    f"{STYLE_GATE}: tools.{name}.{key} must be a list of strings"
+                )
+                continue
+            if any(_HOST_USER_PATH.search(item) for item in template):
+                findings.append(
+                    f"{STYLE_GATE}: tools.{name}.{key} must not contain host user paths"
+                )
+    return ("invalid", findings) if findings else ("valid", [])
 
 
 def _check_rule(root: Path, path: Path, text: str) -> list[str]:
@@ -547,7 +933,9 @@ def _check_rule(root: Path, path: Path, text: str) -> list[str]:
                 findings.append((number, "expected exactly one H1 (found another H1)"))
         if trimmed == CHECKS_HEADING:
             checks = True
-    for offset, destination, bare in _index_links(text, list(_mask_inline(text, ranges, [], offsets)), 0, len(text)):
+    for offset, destination, bare in _index_links(
+        text, list(_mask_inline(text, ranges, [], offsets)), 0, len(text)
+    ):
         if _skipped_destination(destination):
             continue
         number = bisect_right(offsets, offset)
@@ -564,11 +952,14 @@ def _check_rule(root: Path, path: Path, text: str) -> list[str]:
         findings.append((unclosed, "unclosed fence"))
     if not checks:
         findings.append((1, f'missing "{CHECKS_HEADING}" heading'))
+    findings.extend(_checks_fence_findings(lines))
     findings.sort(key=lambda item: item[0])
     return [f"line {number}: {finding}" for number, finding in findings]
 
 
-def validate(root: Path, rules_file: str = RULES_DEFAULT, draft_dir: Path | None = None) -> list[str]:
+def validate(
+    root: Path, rules_file: str = RULES_DEFAULT, draft_dir: Path | None = None
+) -> list[str]:
     try:
         rules_path, rules_rel = _select_rules(root, rules_file)
     except (OSError, ValueError) as error:
@@ -590,16 +981,34 @@ def validate(root: Path, rules_file: str = RULES_DEFAULT, draft_dir: Path | None
         except OSError as error:
             findings.append(f"{relative}: cannot read file: {error}")
         else:
-            problems = (_check_index(root, text, rules_path, rules_rel, rules_entry) if path == index
-                        else _check_rule(root, rules_path, text))
+            problems = (
+                _check_index(root, text, rules_path, rules_rel, rules_entry)
+                if path == index
+                else _check_rule(root, rules_path, text)
+            )
             findings.extend(f"{relative}: {problem}" for problem in problems)
+    style_gate_path = root / STYLE_GATE
+    if draft_dir is not None and os.path.lexists(draft_dir / STYLE_GATE):
+        style_gate_path = draft_dir / STYLE_GATE
+    _, style_gate_findings = _inspect_style_gate(style_gate_path)
+    findings.extend(style_gate_findings)
     return findings
 
 
-def _git(argv: list[str], cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
+def _git(
+    argv: list[str], cwd: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *argv], cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, capture_output=True,
-        text=True, encoding="utf-8", errors="replace", timeout=_GIT_TIMEOUT, check=False,
+        ["git", *argv],
+        cwd=str(cwd),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=_GIT_TIMEOUT,
+        check=False,
     )
 
 
@@ -608,7 +1017,11 @@ def _first_line(text: str) -> str:
 
 
 def _inherited_git() -> list[str]:
-    return sorted(name for name in os.environ if name.startswith("GIT_") and name not in _GIT_PASSTHROUGH)
+    return sorted(
+        name
+        for name in os.environ
+        if name.startswith("GIT_") and name not in _GIT_PASSTHROUGH
+    )
 
 
 def _child_env() -> dict[str, str]:
@@ -637,9 +1050,20 @@ def _git_version(cwd: Path, env: dict[str, str]) -> str:
     return ""
 
 
-def _git_worktree(start: Path, env: dict[str, str]) -> tuple[tuple[Path, Path, Path] | None, str]:
-    result = _git(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"],
-                  start, env)
+def _git_worktree(
+    start: Path, env: dict[str, str]
+) -> tuple[tuple[Path, Path, Path] | None, str]:
+    result = _git(
+        [
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--git-dir",
+            "--git-common-dir",
+        ],
+        start,
+        env,
+    )
     if result.returncode:
         return None, f"not a Git worktree: {_first_line(result.stderr)}"
     lines = result.stdout.splitlines()
@@ -656,7 +1080,9 @@ def _within(ancestor: Path, path: Path) -> bool:
 
 
 def _ignored(root: Path, rules_rel: str, env: dict[str, str]) -> list[str]:
-    result = _git(["check-ignore", "--no-index", "-v", "--", INDEX, rules_rel], root, env)
+    result = _git(
+        ["check-ignore", "--no-index", "-v", "--", INDEX, rules_rel], root, env
+    )
     if result.returncode == 1:
         return []
     if result.returncode != 0:
@@ -667,7 +1093,9 @@ def _ignored(root: Path, rules_rel: str, env: dict[str, str]) -> list[str]:
         if match is None:
             findings.append(f"check-ignore output is unparsable: {line!r}")
         elif not match["pattern"].startswith("!"):
-            findings.append(f"{match['path']} is ignored by {match['source']}:{match['line']} ({match['pattern']})")
+            findings.append(
+                f"{match['path']} is ignored by {match['source']}:{match['line']} ({match['pattern']})"
+            )
     return findings
 
 
@@ -676,16 +1104,116 @@ def _claude_md_state(root: Path) -> str:
         entry = (root / "CLAUDE.md").lstat()
     except OSError:
         return "absent"
-    if not stat.S_ISREG(entry.st_mode) or getattr(entry, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+    if (
+        not stat.S_ISREG(entry.st_mode)
+        or getattr(entry, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    ):
         return "unusual"
     try:
         text = (root / "CLAUDE.md").read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return "present"
-    return "imports" if any(line.strip() == f"@{INDEX}" for line in text.splitlines()) else "present"
+    return (
+        "imports"
+        if any(line.strip() == f"@{INDEX}" for line in text.splitlines())
+        else "present"
+    )
 
 
-def prepare(start: Path, rules_file: str = RULES_DEFAULT) -> tuple[dict[str, str] | None, list[str]]:
+def _entry_stat(path: Path) -> os.stat_result | None:
+    try:
+        return _metadata(path)
+    except (OSError, _PathFinding):
+        return None
+
+
+def _regular_dir(path: Path) -> bool:
+    entry = _entry_stat(path)
+    return entry is not None and stat.S_ISDIR(entry.st_mode)
+
+
+def _regular_file(path: Path) -> bool:
+    entry = _entry_stat(path)
+    return entry is not None and stat.S_ISREG(entry.st_mode)
+
+
+def _listdir_names(directory: Path) -> list[str]:
+    try:
+        return os.listdir(directory)
+    except OSError:
+        return []
+
+
+def _plain_directory(
+    root: Path, metadata: tuple[Path, Path], *parts: str
+) -> Path | None:
+    directory = root
+    for part in parts:
+        directory /= part
+        if not _regular_dir(directory):
+            return None
+        if any(_within(special, directory) for special in metadata):
+            return None
+    return directory
+
+
+def _listed_sources(root: Path, metadata: tuple[Path, Path]) -> set[str]:
+    sources: set[str] = set()
+    for parts, suffix in ((("docs", "rules"), ".md"), ((".cursor", "rules"), "")):
+        directory = _plain_directory(root, metadata, *parts)
+        if directory is None:
+            continue
+        sources.update(
+            f"{'/'.join(parts)}/{name}"
+            for name in _listdir_names(directory)
+            if name.endswith(suffix) and _regular_file(directory / name)
+        )
+    github = _plain_directory(root, metadata, ".github")
+    if github is not None and _regular_file(github / "copilot-instructions.md"):
+        sources.add(".github/copilot-instructions.md")
+    if _regular_file(root / ".windsurfrules"):
+        sources.add(".windsurfrules")
+    return sources
+
+
+def _nested_sources(root: Path, metadata: tuple[Path, Path]) -> set[str]:
+    skipped = [
+        entry for special in metadata if (entry := _entry_stat(special)) is not None
+    ]
+    sources: set[str] = set()
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        for name in _listdir_names(current):
+            child = current / name
+            entry = _entry_stat(child)
+            if entry is None:
+                continue
+            if stat.S_ISDIR(entry.st_mode):
+                if name not in _SKIP_WALK_DIRS and not any(
+                    os.path.samestat(entry, special) for special in skipped
+                ):
+                    stack.append(child)
+            elif (
+                current != root
+                and name in _NESTED_RULE_FILES
+                and stat.S_ISREG(entry.st_mode)
+            ):
+                sources.add(child.relative_to(root).as_posix())
+    return sources
+
+
+def _rule_sources(
+    root: Path, git_dir: Path, common_dir: Path, rules_rel: str
+) -> list[str]:
+    metadata = (git_dir, common_dir)
+    sources = _listed_sources(root, metadata) | _nested_sources(root, metadata)
+    return sorted(sources - {rules_rel})
+
+
+def prepare(
+    start: Path, rules_file: str = RULES_DEFAULT
+) -> tuple[dict[str, object] | None, list[str]]:
     inherited = _inherited_git()
     if inherited:
         return None, [f"inherited {','.join(inherited)}; unset them and retry"]
@@ -713,12 +1241,15 @@ def prepare(start: Path, rules_file: str = RULES_DEFAULT) -> tuple[dict[str, str
     findings.extend(_ignored(root, rules_rel, env))
     if findings:
         return None, findings
+    style_gate, _ = _inspect_style_gate(root / STYLE_GATE)
     return {
         "root": str(root),
         "rules_file": rules_rel,
         "git_dir": str(git_dir),
         "common_dir": str(common_dir),
         "claude_md": _claude_md_state(root),
+        "rule_sources": _rule_sources(root, git_dir, common_dir, rules_rel),
+        "style_gate": style_gate,
     }, []
 
 
@@ -735,7 +1266,9 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _existing_directory(parser: argparse.ArgumentParser, value: str, label: str) -> Path:
+def _existing_directory(
+    parser: argparse.ArgumentParser, value: str, label: str
+) -> Path:
     try:
         path = Path(value).resolve(strict=True)
         if not path.is_dir():
@@ -747,7 +1280,10 @@ def _existing_directory(parser: argparse.ArgumentParser, value: str, label: str)
 
 def main(argv: list[str] | None = None) -> int:
     if sys.version_info < MIN_PYTHON:
-        print(f"error: Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer is required", file=sys.stderr)
+        print(
+            f"error: Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or newer is required",
+            file=sys.stderr,
+        )
         return 2
     parser = _parser()
     arguments = parser.parse_args(argv)
@@ -757,7 +1293,11 @@ def main(argv: list[str] | None = None) -> int:
         report, findings = prepare(start, arguments.rules_file)
     else:
         root = _existing_directory(parser, arguments.root, "root")
-        draft_dir = _existing_directory(parser, arguments.draft_dir, "draft dir") if arguments.draft_dir is not None else None
+        draft_dir = (
+            _existing_directory(parser, arguments.draft_dir, "draft dir")
+            if arguments.draft_dir is not None
+            else None
+        )
         findings = validate(root, arguments.rules_file, draft_dir)
     if findings:
         for finding in findings:

@@ -27,8 +27,11 @@ def load_role(path):
 def copy_package(directory, name='package'):
     relocated = Path(directory) / name
     relocated.mkdir()
-    for entry in ('agents', 'roles', 'harnesses', 'standards', 'scripts', 'tools'):
+    for entry in ('roles', 'harnesses', 'standards', 'scripts', 'tools'):
         shutil.copytree(ROOT / entry, relocated / entry, ignore=shutil.ignore_patterns('__pycache__'))
+    forms_package = ROOT.parent / 'agy-agents'
+    shutil.copytree(forms_package, Path(directory) / forms_package.name,
+                    ignore=shutil.ignore_patterns('__pycache__'))
     return relocated
 
 

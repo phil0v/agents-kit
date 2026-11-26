@@ -17,6 +17,12 @@ from _support import load_script_module
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'style-gate.py'
+RELPATH_SETTINGS = {
+    'mode': 'lint',
+    'extensions': ['.ts'],
+    'write': ['eslint', '--fix', '{relpath}', '{path}'],
+    'check': ['eslint', '{relpath}', '{path}'],
+}
 
 
 class StyleGateTests(unittest.TestCase):
@@ -37,8 +43,11 @@ class StyleGateTests(unittest.TestCase):
         return path
 
     def environment(self):
-        return dict(os.environ, PATH=str(self.bin),
-                    AGENTS_HOME=str(self.directory / 'metrics home'))
+        return dict(
+            os.environ,
+            PATH=str(self.bin),
+            AGENTS_HOME=str(self.directory / 'metrics home'),
+        )
 
     def use_stub_path(self):
         self.addCleanup(os.environ.__setitem__, 'PATH', os.environ.get('PATH', ''))
@@ -47,7 +56,10 @@ class StyleGateTests(unittest.TestCase):
     def cli(self, *arguments):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), *map(str, arguments)],
-            capture_output=True, text=True, timeout=30, env=self.environment(),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=self.environment(),
         )
         report = json.loads(result.stdout)
         for record in report.get('files', []):
@@ -62,44 +74,70 @@ class StyleGateTests(unittest.TestCase):
         return path
 
     def without_log_paths(self, records):
-        return [{**record, 'tools': [{key: value for key, value in outcome.items()
-                                      if key != 'log_path'} for outcome in record['tools']]}
-                for record in records]
+        return [
+            {
+                **record,
+                'tools': [
+                    {key: value for key, value in outcome.items() if key != 'log_path'}
+                    for outcome in record['tools']
+                ],
+            }
+            for record in records
+        ]
 
     def test_table_resolution_per_extension(self):
-        for tool in ('goimports', 'golangci-lint', 'php-cs-fixer', 'prettier',
-                     'eslint', 'ruff', 'shfmt', 'shellcheck'):
+        for tool in (
+            'goimports',
+            'golangci-lint',
+            'php-cs-fixer',
+            'prettier',
+            'eslint',
+            'ruff',
+            'shfmt',
+            'shellcheck',
+        ):
             self.stub(tool, 'exit 0')
         (self.repo / '.golangci.yml').write_text('')
         (self.repo / '.editorconfig').write_text('')
         (self.repo / 'pyproject.toml').write_text('[tool.ruff]\n')
         self.use_stub_path()
         cases = {
-            'main.go': [('goimports', 'format', ['-w', '@PATH']),
-                        ('golangci-lint', 'lint',
-                         ['run', '--new-from-rev', 'HEAD', './.'])],
+            'main.go': [
+                ('goimports', 'format', ['-w', '@PATH']),
+                ('golangci-lint', 'lint', ['run', '--new-from-rev', 'HEAD', './.']),
+            ],
             'base.php': [('php-cs-fixer', 'format', ['fix', '--quiet', '@PATH'])],
-            'app.ts': [('prettier', 'format', ['--write', '@PATH']),
-                       ('eslint', 'lint', ['@PATH'])],
-            'mod.py': [('ruff', 'format', ['format', '@PATH']),
-                       ('ruff', 'lint',
-                        ['check', '--output-format', 'concise', '@PATH'])],
-            'run.sh': [('shfmt', 'format', ['-w', '@PATH']),
-                       ('shellcheck', 'lint', ['-f', 'gcc', '@PATH'])],
+            'app.ts': [
+                ('prettier', 'format', ['--write', '@PATH']),
+                ('eslint', 'lint', ['@PATH']),
+            ],
+            'mod.py': [
+                ('ruff', 'format', ['format', '@PATH']),
+                ('ruff', 'lint', ['check', '--output-format', 'concise', '@PATH']),
+            ],
+            'run.sh': [
+                ('shfmt', 'format', ['-w', '@PATH']),
+                ('shellcheck', 'lint', ['-f', 'gcc', '@PATH']),
+            ],
         }
         for name, expected in cases.items():
             with self.subTest(name=name):
                 path = self.write(name, 'content\n')
                 entries = list(self.module.entries(path, self.repo))
-                self.assertEqual([entry.mode for entry in entries],
-                                 [mode for _, mode, _ in expected])
+                self.assertEqual(
+                    [entry.mode for entry in entries], [mode for _, mode, _ in expected]
+                )
                 for entry, (tool, _, tail) in zip(entries, expected):
-                    tail = [str(path) if argument == '@PATH' else argument
-                            for argument in tail]
+                    tail = [
+                        str(path) if argument == '@PATH' else argument
+                        for argument in tail
+                    ]
                     self.assertEqual(Path(entry.command[0]).name, tool)
                     self.assertEqual(entry.command[1:], tail)
-                self.assertEqual(list(self.module.commands(path, self.repo)),
-                                 [entry.command for entry in entries])
+                self.assertEqual(
+                    list(self.module.commands(path, self.repo)),
+                    [entry.command for entry in entries],
+                )
 
     def test_go_falls_back_to_gofmt_without_golangci_config(self):
         self.stub('gofmt', 'exit 0')
@@ -107,8 +145,9 @@ class StyleGateTests(unittest.TestCase):
         self.use_stub_path()
         path = self.write('main.go', 'package main\n')
         entries = list(self.module.entries(path, self.repo))
-        self.assertEqual([(entry.tool, entry.mode) for entry in entries],
-                         [('gofmt', 'format')])
+        self.assertEqual(
+            [(entry.tool, entry.mode) for entry in entries], [('gofmt', 'format')]
+        )
         (self.repo / '.golangci.yml').write_text('')
         entries = list(self.module.entries(path, self.repo))
         self.assertEqual([entry.tool for entry in entries], ['gofmt', 'golangci-lint'])
@@ -119,14 +158,19 @@ class StyleGateTests(unittest.TestCase):
         self.stub('ruff', 'exit 0')
         self.use_stub_path()
         script = self.write('run.sh', 'echo hi\n')
-        self.assertEqual([entry.tool for entry in self.module.entries(script, self.repo)],
-                         ['shellcheck'])
+        self.assertEqual(
+            [entry.tool for entry in self.module.entries(script, self.repo)],
+            ['shellcheck'],
+        )
         source = self.write('mod.py', 'x = 1\n')
-        self.assertEqual([entry.mode for entry in self.module.entries(source, self.repo)],
-                         ['lint'])
+        self.assertEqual(
+            [entry.mode for entry in self.module.entries(source, self.repo)], ['lint']
+        )
         (self.repo / 'ruff.toml').write_text('')
-        self.assertEqual([entry.mode for entry in self.module.entries(source, self.repo)],
-                         ['format', 'lint'])
+        self.assertEqual(
+            [entry.mode for entry in self.module.entries(source, self.repo)],
+            ['format', 'lint'],
+        )
 
     def test_unsupported_extension_has_no_tools(self):
         path = self.write('notes.md', '# title\n')
@@ -145,13 +189,15 @@ class StyleGateTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(report['repo'], str(self.repo.resolve()))
         self.assertFalse(report['deadline_exceeded'])
-        self.assertEqual(report['rule_family_coverage'],
-                         self.module.RULE_FAMILY_COVERAGE)
+        self.assertEqual(
+            report['rule_family_coverage'], self.module.RULE_FAMILY_COVERAGE
+        )
         record = report['files'][0]
         self.assertEqual(record['path'], 'main.go')
         self.assertFalse(record['mutated'])
-        self.assertEqual(record['sha256'],
-                         hashlib.sha256(source.read_bytes()).hexdigest())
+        self.assertEqual(
+            record['sha256'], hashlib.sha256(source.read_bytes()).hexdigest()
+        )
         self.assertEqual(record['uncovered'], [])
         self.assertEqual(record['covered_families'], ['Imports'])
         outcome = record['tools'][0]
@@ -175,8 +221,9 @@ class StyleGateTests(unittest.TestCase):
         record = report['files'][0]
         self.assertTrue(record['mutated'])
         self.assertEqual(record['sha256'], hashlib.sha256(b'formatted\n').hexdigest())
-        self.assertEqual([outcome['mode'] for outcome in record['tools']],
-                         ['format', 'lint'])
+        self.assertEqual(
+            [outcome['mode'] for outcome in record['tools']], ['format', 'lint']
+        )
 
     def test_lint_diagnostics_exit_one(self):
         self.stub('ruff', 'if [ "$1" = check ]; then echo "mod.py:1: E501"; exit 1; fi')
@@ -220,8 +267,9 @@ class StyleGateTests(unittest.TestCase):
         listing.write_text(json.dumps(['run.sh', 'notes.md']))
         code, report = self.cli('--repo', self.repo, '--files-from', listing)
         self.assertEqual(code, 0)
-        self.assertEqual([record['path'] for record in report['files']],
-                         ['run.sh', 'notes.md'])
+        self.assertEqual(
+            [record['path'] for record in report['files']], ['run.sh', 'notes.md']
+        )
 
     def test_directory_symlink_is_reported_as_the_link_itself(self):
         (self.repo / 'package/skills/spec-new').mkdir(parents=True)
@@ -234,8 +282,9 @@ class StyleGateTests(unittest.TestCase):
         self.assertEqual(code, 0)
         record = report['files'][0]
         self.assertEqual(record['path'], 'skills/spec-new')
-        self.assertEqual(record['sha256'],
-                         hashlib.sha256(os.fsencode(os.readlink(link))).hexdigest())
+        self.assertEqual(
+            record['sha256'], hashlib.sha256(os.fsencode(os.readlink(link))).hexdigest()
+        )
         self.assertEqual(record['mutated'], False)
         self.assertEqual(record['tools'], [])
         self.assertEqual(record['uncovered'], [])
@@ -246,8 +295,9 @@ class StyleGateTests(unittest.TestCase):
         listing.write_text('run.sh\nnotes.md\n')
         code, report = self.cli('--repo', self.repo, '--files-from', listing)
         self.assertEqual(code, 2)
-        self.assertEqual(report['error'],
-                         '--files-from must carry a JSON list of file paths')
+        self.assertEqual(
+            report['error'], '--files-from must carry a JSON list of file paths'
+        )
 
     def test_cli_rejects_all_escape_forms_before_running_any_tool(self):
         marker = self.directory / 'tool-ran'
@@ -256,9 +306,15 @@ class StyleGateTests(unittest.TestCase):
         external = self.directory / 'external.js'
         external.write_bytes(b'external\n')
         (self.repo / 'linked.js').symlink_to(external)
-        (self.repo / 'linked-directory').symlink_to(self.directory, target_is_directory=True)
-        for escaped in (str(external), '../external.js', 'linked.js',
-                        'linked-directory/external.js'):
+        (self.repo / 'linked-directory').symlink_to(
+            self.directory, target_is_directory=True
+        )
+        for escaped in (
+            str(external),
+            '../external.js',
+            'linked.js',
+            'linked-directory/external.js',
+        ):
             with self.subTest(escaped=escaped):
                 code, report = self.cli('--repo', self.repo, 'app.js', escaped)
                 self.assertEqual(code, 2)
@@ -280,21 +336,50 @@ class StyleGateTests(unittest.TestCase):
 
     def test_check_only_cli_uses_read_only_commands(self):
         cases = {
-            'goimports': ('main.go', [(['-d'], 0,
-                                      'goimports requires formatting\nformatting required')]),
-            'gofmt': ('main.go', [(['-d'], 0,
-                                  'gofmt requires formatting\nformatting required')]),
-            'php-cs-fixer': ('base.php', [
-                (['fix', '--dry-run', '--diff', '--using-cache=no'], 1,
-                 'php-cs-fixer exited 1\nformatting required')]),
-            'prettier': ('app.js', [
-                (['--check'], 1, 'prettier exited 1\nformatting required')]),
-            'ruff': ('mod.py', [
-                (['format', '--check', '--no-cache'], 1,
-                 'ruff exited 1\nformatting required'),
-                (['check', '--no-fix', '--no-fix-only', '--no-cache',
-                  '--output-format', 'concise'], 1,
-                 'ruff exited 1\nformatting required')]),
+            'goimports': (
+                'main.go',
+                [(['-d'], 0, 'goimports requires formatting\nformatting required')],
+            ),
+            'gofmt': (
+                'main.go',
+                [(['-d'], 0, 'gofmt requires formatting\nformatting required')],
+            ),
+            'php-cs-fixer': (
+                'base.php',
+                [
+                    (
+                        ['fix', '--dry-run', '--diff', '--using-cache=no'],
+                        1,
+                        'php-cs-fixer exited 1\nformatting required',
+                    )
+                ],
+            ),
+            'prettier': (
+                'app.js',
+                [(['--check'], 1, 'prettier exited 1\nformatting required')],
+            ),
+            'ruff': (
+                'mod.py',
+                [
+                    (
+                        ['format', '--check', '--no-cache'],
+                        1,
+                        'ruff exited 1\nformatting required',
+                    ),
+                    (
+                        [
+                            'check',
+                            '--no-fix',
+                            '--no-fix-only',
+                            '--no-cache',
+                            '--output-format',
+                            'concise',
+                        ],
+                        1,
+                        'ruff exited 1\nformatting required',
+                    ),
+                ],
+            ),
             'shfmt': ('run.sh', [(['-d'], 1, 'shfmt exited 1\nformatting required')]),
         }
         (self.repo / 'ruff.toml').write_text('[lint]\n')
@@ -323,35 +408,62 @@ class StyleGateTests(unittest.TestCase):
                 self.assertTrue(report['check_only'])
                 self.assertEqual(
                     [json.loads(line) for line in calls.read_text().splitlines()],
-                    [[*arguments, str(source.resolve())] for arguments, _, _ in expected])
+                    [
+                        [*arguments, str(source.resolve())]
+                        for arguments, _, _ in expected
+                    ],
+                )
                 record = report['files'][0]
                 self.assertFalse(record['mutated'])
-                self.assertEqual(record['sha256'], hashlib.sha256(b'unformatted\n').hexdigest())
+                self.assertEqual(
+                    record['sha256'], hashlib.sha256(b'unformatted\n').hexdigest()
+                )
                 self.assertEqual(record['covered_families'], [])
                 self.assertEqual(
-                    [(outcome['command'][1:-1], outcome['exit_status'],
-                      outcome['diagnostics']) for outcome in record['tools']], expected)
+                    [
+                        (
+                            outcome['command'][1:-1],
+                            outcome['exit_status'],
+                            outcome['diagnostics'],
+                        )
+                        for outcome in record['tools']
+                    ],
+                    expected,
+                )
 
     def test_check_only_preserves_worktree_bytes_and_index(self):
-        self.stub('prettier',
-                  'if [ "$1" = --write ]; then printf changed > "$2"; exit 0; fi\n'
-                  'echo "formatting required"; exit 1')
+        self.stub(
+            'prettier',
+            'if [ "$1" = --write ]; then printf changed > "$2"; exit 0; fi\n'
+            'echo "formatting required"; exit 1',
+        )
         self.stub('eslint', 'exit 0')
         self.write('app.js', 'unformatted\n')
-        subprocess.run(['git', 'init', '-q', str(self.repo)], check=True,
-                       capture_output=True)
-        subprocess.run(['git', '-C', str(self.repo), 'add', '.'], check=True,
-                       capture_output=True)
-        before_tree = {str(path.relative_to(self.repo)): path.read_bytes()
-                       for path in self.repo.rglob('*') if path.is_file()}
+        subprocess.run(
+            ['git', 'init', '-q', str(self.repo)], check=True, capture_output=True
+        )
+        subprocess.run(
+            ['git', '-C', str(self.repo), 'add', '.'], check=True, capture_output=True
+        )
+        before_tree = {
+            str(path.relative_to(self.repo)): path.read_bytes()
+            for path in self.repo.rglob('*')
+            if path.is_file()
+        }
         code, report = self.cli('--repo', self.repo, '--check-only', 'app.js')
         self.assertEqual(code, 1)
         self.assertEqual(
-            {str(path.relative_to(self.repo)): path.read_bytes()
-             for path in self.repo.rglob('*') if path.is_file()}, before_tree)
+            {
+                str(path.relative_to(self.repo)): path.read_bytes()
+                for path in self.repo.rglob('*')
+                if path.is_file()
+            },
+            before_tree,
+        )
         self.assertFalse(report['files'][0]['mutated'])
-        self.assertEqual(report['files'][0]['sha256'],
-                         hashlib.sha256(b'unformatted\n').hexdigest())
+        self.assertEqual(
+            report['files'][0]['sha256'], hashlib.sha256(b'unformatted\n').hexdigest()
+        )
 
     def test_check_only_go_lint_disables_configured_fixes(self):
         marker = self.directory / 'lint-arguments'
@@ -362,8 +474,10 @@ class StyleGateTests(unittest.TestCase):
         self.write('main.go', 'package main\n')
         code, report = self.cli('--repo', self.repo, '--check-only', 'main.go')
         self.assertEqual(code, 0)
-        self.assertEqual(marker.read_text().splitlines(),
-                         ['run', '--fix=false', '--new-from-rev', 'HEAD', './.'])
+        self.assertEqual(
+            marker.read_text().splitlines(),
+            ['run', '--fix=false', '--new-from-rev', 'HEAD', './.'],
+        )
         self.assertEqual(report['files'][0]['tools'][1]['exit_status'], 0)
 
     def test_go_lint_preflight_failures_are_not_silent_skips(self):
@@ -388,8 +502,10 @@ class StyleGateTests(unittest.TestCase):
                 self.assertEqual(outcome['exit_status'], expected_status)
                 self.assertIsNotNone(outcome['diagnostics'])
                 self.assertFalse(outcome.get('skipped', False))
-                self.assertEqual(outcome['preflight_command'][1:],
-                                 ['rev-parse', '--verify', '-q', 'HEAD'])
+                self.assertEqual(
+                    outcome['preflight_command'][1:],
+                    ['rev-parse', '--verify', '-q', 'HEAD'],
+                )
                 self.assertFalse(marker.exists())
 
     def test_go_lint_preflight_timeout_blocks_main(self):
@@ -403,7 +519,9 @@ class StyleGateTests(unittest.TestCase):
         output = io.StringIO()
         with patch.object(self.module, 'TOOL_TIMEOUT_SECONDS', 0.2):
             with contextlib.redirect_stdout(output):
-                code = self.module.main(['--repo', str(self.repo), '--check-only', 'main.go'])
+                code = self.module.main(
+                    ['--repo', str(self.repo), '--check-only', 'main.go']
+                )
         self.assertEqual(code, 1)
         report = json.loads(output.getvalue())
         outcome = report['files'][0]['tools'][1]
@@ -416,7 +534,9 @@ class StyleGateTests(unittest.TestCase):
 
     def test_go_lint_skips_a_genuinely_unborn_head(self):
         git = shutil.which('git')
-        subprocess.run([git, 'init', '-q', str(self.repo)], check=True, capture_output=True)
+        subprocess.run(
+            [git, 'init', '-q', str(self.repo)], check=True, capture_output=True
+        )
         marker = self.directory / 'linter-ran'
         self.stub('git', f'exec "{git}" "$@"')
         self.stub('goimports', 'exit 0')
@@ -450,20 +570,32 @@ class StyleGateTests(unittest.TestCase):
                     log = self.directory / f'{entry.tool}.log'
                     log.write_text('')
                     self.addCleanup(log.unlink, missing_ok=True)
-                    return {'tool': entry.tool, 'mode': entry.mode,
-                            'command': entry.command, 'exit_status': 0,
-                            'timed_out': False, 'mutated': False,
-                            'diagnostics': None, 'log_path': str(log)}
+                    return {
+                        'tool': entry.tool,
+                        'mode': entry.mode,
+                        'command': entry.command,
+                        'exit_status': 0,
+                        'timed_out': False,
+                        'mutated': False,
+                        'diagnostics': None,
+                        'log_path': str(log),
+                    }
 
                 with patch.object(self.module, 'execute', side_effect=execute):
-                    with patch.object(self.module.time, 'monotonic',
-                                      side_effect=[0.0, 0.0, after_preflight]):
-                        report = self.module.run_gate(self.repo, [source],
-                                                      deadline_seconds=40)
+                    with patch.object(
+                        self.module.time,
+                        'monotonic',
+                        side_effect=[0.0, 0.0, after_preflight],
+                    ):
+                        report = self.module.run_gate(
+                            self.repo, [source], deadline_seconds=40
+                        )
                 self.assertEqual(calls, expected_calls)
                 self.assertEqual(report['deadline_exceeded'], exceeded)
-                self.assertEqual(report['files'][0]['sha256'],
-                                 hashlib.sha256(b'package main\n').hexdigest())
+                self.assertEqual(
+                    report['files'][0]['sha256'],
+                    hashlib.sha256(b'package main\n').hexdigest(),
+                )
 
     def test_clean_check_only_go_reports_import_coverage(self):
         self.stub('goimports', '[ "$1" = -d ]')
@@ -481,7 +613,9 @@ class StyleGateTests(unittest.TestCase):
         record = report['files'][0]
         self.assertTrue(record['mutated'])
         self.assertIn('mutated a check-only input', record['tools'][0]['diagnostics'])
-        self.assertEqual(record['sha256'], hashlib.sha256(source.read_bytes()).hexdigest())
+        self.assertEqual(
+            record['sha256'], hashlib.sha256(source.read_bytes()).hexdigest()
+        )
         self.assertEqual(record['covered_families'], [])
 
     def test_check_only_launch_failure_blocks_with_diagnostic(self):
@@ -504,7 +638,9 @@ class StyleGateTests(unittest.TestCase):
         output = io.StringIO()
         with patch.object(self.module.time, 'monotonic', side_effect=[0.0, 100.0]):
             with contextlib.redirect_stdout(output):
-                code = self.module.main(['--repo', str(self.repo), '--check-only', 'mod.py'])
+                code = self.module.main(
+                    ['--repo', str(self.repo), '--check-only', 'mod.py']
+                )
         self.assertEqual(code, 1)
         report = json.loads(output.getvalue())
         self.assertTrue(report['deadline_exceeded'])
@@ -517,8 +653,12 @@ class StyleGateTests(unittest.TestCase):
         path = self.write('app.js', 'unformatted\n')
         calls = iter([0.0, 0.0, 100.0])
         self.addCleanup(setattr, self.module, 'time', self.module.time)
-        self.module.time = type('FakeTime', (), {'monotonic': staticmethod(lambda: next(calls))})
-        record, exceeded = self.module.run_file(path, self.repo, self.environment(), deadline=100.0)
+        self.module.time = type(
+            'FakeTime', (), {'monotonic': staticmethod(lambda: next(calls))}
+        )
+        record, exceeded = self.module.run_file(
+            path, self.repo, self.environment(), deadline=100.0
+        )
         self.assertTrue(exceeded)
         self.assertEqual(record['sha256'], hashlib.sha256(b'formatted\n').hexdigest())
         self.assertTrue(record['mutated'])
@@ -527,15 +667,27 @@ class StyleGateTests(unittest.TestCase):
     def test_parallel_gate_records_equal_serial_run_file(self):
         self.stub('prettier', 'shift; printf "formatted\\n" > "$1"')
         self.stub('eslint', 'exit 0')
-        self.stub('ruff', 'if [ "$1" = check ]; then echo "gamma.py:1: E501"; exit 1; fi')
+        self.stub(
+            'ruff', 'if [ "$1" = check ]; then echo "gamma.py:1: E501"; exit 1; fi'
+        )
         names = ['alpha.js', 'beta.js', 'gamma.py', 'delta.js', 'notes.md']
         for name in names:
             self.write(name, 'unformatted\n')
         code, report = self.cli('--repo', self.repo, *names)
         self.assertEqual(code, 1)
-        self.assertEqual(set(report),
-                         {'repo', 'check_only', 'deadline_seconds', 'deadline_exceeded',
-                          'rule_family_coverage', 'gate_fingerprint', 'uncovered', 'files'})
+        self.assertEqual(
+            set(report),
+            {
+                'repo',
+                'check_only',
+                'deadline_seconds',
+                'deadline_exceeded',
+                'rule_family_coverage',
+                'gate_fingerprint',
+                'uncovered',
+                'files',
+            },
+        )
         self.assertFalse(report['deadline_exceeded'])
         self.assertEqual([record['path'] for record in report['files']], names)
         for name in names:
@@ -545,47 +697,62 @@ class StyleGateTests(unittest.TestCase):
         deadline = self.module.time.monotonic() + self.module.DEADLINE_SECONDS
         reference = []
         for name in names:
-            record, exceeded = self.module.run_file((self.repo / name).resolve(),
-                                                    resolved_repo, self.environment(), deadline)
+            record, exceeded = self.module.run_file(
+                (self.repo / name).resolve(),
+                resolved_repo,
+                self.environment(),
+                deadline,
+            )
             self.assertFalse(exceeded)
             reference.append(record)
             for outcome in record['tools']:
                 if outcome.get('log_path'):
                     self.addCleanup(Path(outcome['log_path']).unlink, missing_ok=True)
-        self.assertEqual(self.without_log_paths(report['files']),
-                         self.without_log_paths(reference))
+        self.assertEqual(
+            self.without_log_paths(report['files']), self.without_log_paths(reference)
+        )
 
     def test_duplicate_names_run_one_serial_task_per_file(self):
-        self.stub('prettier',
-                  'shift; IFS= read -r content < "$1"; '
-                  'if [ "$content" = unformatted ]; then printf "formatted\\n" > "$1"; fi')
+        self.stub(
+            'prettier',
+            'shift; IFS= read -r content < "$1"; '
+            'if [ "$content" = unformatted ]; then printf "formatted\\n" > "$1"; fi',
+        )
         self.stub('eslint', 'exit 0')
         self.write('app.js', 'unformatted\n')
         self.write('other.js', 'unformatted\n')
         (self.repo / 'alias.js').symlink_to(self.repo / 'app.js')
         code, report = self.cli('--repo', self.repo, 'app.js', 'other.js', 'alias.js')
         self.assertEqual(code, 0)
-        self.assertEqual([record['path'] for record in report['files']],
-                         ['app.js', 'other.js', 'app.js'])
-        self.assertEqual([record['mutated'] for record in report['files']],
-                         [True, True, False])
+        self.assertEqual(
+            [record['path'] for record in report['files']],
+            ['app.js', 'other.js', 'app.js'],
+        )
+        self.assertEqual(
+            [record['mutated'] for record in report['files']], [True, True, False]
+        )
         self.assertEqual((self.repo / 'app.js').read_text(), 'formatted\n')
         self.assertEqual((self.repo / 'other.js').read_text(), 'formatted\n')
 
     def test_hardlinked_names_run_one_serial_task(self):
-        self.stub('prettier',
-                  'shift; IFS= read -r content < "$1"; '
-                  'if [ "$content" = unformatted ]; then printf "formatted\\n" > "$1"; fi')
+        self.stub(
+            'prettier',
+            'shift; IFS= read -r content < "$1"; '
+            'if [ "$content" = unformatted ]; then printf "formatted\\n" > "$1"; fi',
+        )
         self.stub('eslint', 'exit 0')
         self.write('app.js', 'unformatted\n')
         self.write('other.js', 'unformatted\n')
         os.link(self.repo / 'app.js', self.repo / 'twin.js')
         code, report = self.cli('--repo', self.repo, 'app.js', 'other.js', 'twin.js')
         self.assertEqual(code, 0)
-        self.assertEqual([record['path'] for record in report['files']],
-                         ['app.js', 'other.js', 'twin.js'])
-        self.assertEqual([record['mutated'] for record in report['files']],
-                         [True, True, False])
+        self.assertEqual(
+            [record['path'] for record in report['files']],
+            ['app.js', 'other.js', 'twin.js'],
+        )
+        self.assertEqual(
+            [record['mutated'] for record in report['files']], [True, True, False]
+        )
         self.assertEqual((self.repo / 'app.js').read_text(), 'formatted\n')
         self.assertEqual((self.repo / 'other.js').read_text(), 'formatted\n')
 
@@ -596,10 +763,12 @@ class StyleGateTests(unittest.TestCase):
         for name in names:
             self.write(name, 'x = 1\n')
         with patch.object(self.module, 'GATE_WORKERS', 2):
-            report = self.module.run_gate(self.repo, [self.repo / name for name in names],
-                                          deadline_seconds=0.5)
-        self.assertEqual([record['path'] for record in report['files']],
-                         ['first.py', 'second.py'])
+            report = self.module.run_gate(
+                self.repo, [self.repo / name for name in names], deadline_seconds=0.5
+            )
+        self.assertEqual(
+            [record['path'] for record in report['files']], ['first.py', 'second.py']
+        )
         self.assertTrue(report['deadline_exceeded'])
         for record in report['files']:
             for outcome in record['tools']:
@@ -614,8 +783,9 @@ class StyleGateTests(unittest.TestCase):
         self.write('b.py', 'x = 1\n')
         os.link(self.repo / 'a.py', self.repo / 'twin.py')
         with patch.object(self.module, 'GATE_WORKERS', 1):
-            report = self.module.run_gate(self.repo, [self.repo / name for name in names],
-                                          deadline_seconds=0.5)
+            report = self.module.run_gate(
+                self.repo, [self.repo / name for name in names], deadline_seconds=0.5
+            )
         self.assertEqual([record['path'] for record in report['files']], ['a.py'])
         self.assertTrue(report['deadline_exceeded'])
         self.assertTrue(report['files'][0]['tools'][0]['timed_out'])
@@ -631,8 +801,12 @@ class StyleGateTests(unittest.TestCase):
     def test_tool_timeout_is_a_diagnostic(self):
         self.stub('shellcheck', '/bin/sleep 5')
         self.use_stub_path()
-        self.addCleanup(setattr, self.module, 'TOOL_TIMEOUT_SECONDS',
-                        self.module.TOOL_TIMEOUT_SECONDS)
+        self.addCleanup(
+            setattr,
+            self.module,
+            'TOOL_TIMEOUT_SECONDS',
+            self.module.TOOL_TIMEOUT_SECONDS,
+        )
         self.module.TOOL_TIMEOUT_SECONDS = 0.2
         path = self.write('run.sh', 'echo hi\n')
         report = self.module.run_gate(self.repo, [path], check_only=True)
@@ -659,39 +833,70 @@ class StyleGateTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('error', report)
 
-
     def test_configured_tool_replaces_discovered_entry_and_strips_prefix(self):
         self.stub('prettier', 'exit 0')
-        (self.repo / '.style-gate.json').write_text(json.dumps({
-            'tools': {'eslint': {
-                'mode': 'lint',
-                'extensions': ['.ts'],
-                'check': ['docker', 'exec', 'bidder_node', 'sh', '-c',
-                          'cd /app && npx eslint {path}'],
-                'strip_prefix': 'frontend/',
-            }}}))
+        (self.repo / '.style-gate.json').write_text(
+            json.dumps(
+                {
+                    'tools': {
+                        'eslint': {
+                            'mode': 'lint',
+                            'extensions': ['.ts'],
+                            'check': [
+                                'docker',
+                                'exec',
+                                'bidder_node',
+                                'sh',
+                                '-c',
+                                'cd /app && npx eslint {path}',
+                            ],
+                            'strip_prefix': 'frontend/',
+                        }
+                    }
+                }
+            )
+        )
         (self.repo / 'frontend/src').mkdir(parents=True)
         target = self.write('frontend/src/app.ts', 'export {};\n')
         entries = list(self.module.entries(target, self.repo))
         self.assertEqual([entry.tool for entry in entries], ['prettier', 'eslint'])
         eslint = entries[-1]
         self.assertEqual(eslint.mode, 'lint')
-        expected = ['docker', 'exec', 'bidder_node', 'sh', '-c',
-                    'cd /app && npx eslint src/app.ts']
+        expected = [
+            'docker',
+            'exec',
+            'bidder_node',
+            'sh',
+            '-c',
+            'cd /app && npx eslint src/app.ts',
+        ]
         self.assertEqual(eslint.command, expected)
         self.assertEqual(eslint.check_command, expected)
 
     def test_configured_tool_suppresses_same_named_discovered_entry(self):
         self.stub('prettier', 'exit 0')
         self.stub('eslint', 'exit 0')
-        (self.repo / '.style-gate.json').write_text(json.dumps({
-            'tools': {'eslint': {
-                'mode': 'lint',
-                'extensions': ['.ts'],
-                'check': ['docker', 'exec', 'bidder_node', 'sh', '-c',
-                          'cd /app && npx eslint {path}'],
-                'strip_prefix': 'frontend/',
-            }}}))
+        (self.repo / '.style-gate.json').write_text(
+            json.dumps(
+                {
+                    'tools': {
+                        'eslint': {
+                            'mode': 'lint',
+                            'extensions': ['.ts'],
+                            'check': [
+                                'docker',
+                                'exec',
+                                'bidder_node',
+                                'sh',
+                                '-c',
+                                'cd /app && npx eslint {path}',
+                            ],
+                            'strip_prefix': 'frontend/',
+                        }
+                    }
+                }
+            )
+        )
         (self.repo / 'frontend/src').mkdir(parents=True)
         target = self.write('frontend/src/app.ts', 'export {};\n')
         entries = list(self.module.entries(target, self.repo))
@@ -707,14 +912,125 @@ class StyleGateTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('error', report)
 
+    def test_configured_tool_expands_relpath_without_strip_prefix(self):
+        (self.repo / 'frontend/src').mkdir(parents=True)
+        target = self.write('frontend/src/app.ts', 'export {};\n')
+        entry = self.module.configured_entry(
+            'eslint', RELPATH_SETTINGS, target, self.repo
+        )
+        self.assertEqual(
+            entry.command,
+            ['eslint', '--fix', 'frontend/src/app.ts', str(target)],
+        )
+        self.assertEqual(
+            entry.check_command, ['eslint', 'frontend/src/app.ts', str(target)]
+        )
+
+    def test_strip_prefix_applies_to_path_and_relpath(self):
+        (self.repo / 'frontend/src').mkdir(parents=True)
+        target = self.write('frontend/src/app.ts', 'export {};\n')
+        settings = dict(RELPATH_SETTINGS, strip_prefix='frontend/')
+        entry = self.module.configured_entry('eslint', settings, target, self.repo)
+        self.assertEqual(entry.command, ['eslint', '--fix', 'src/app.ts', 'src/app.ts'])
+        self.assertEqual(entry.check_command, ['eslint', 'src/app.ts', 'src/app.ts'])
+
+    def test_configured_entry_returns_none_outside_prefix_or_repository(self):
+        (self.repo / 'backend').mkdir(parents=True)
+        outside_prefix = self.write('backend/server.ts', 'export {};\n')
+        external = self.directory / 'outside.ts'
+        external.write_text('export {};\n')
+        settings = dict(RELPATH_SETTINGS, strip_prefix='frontend/')
+        self.assertIsNone(
+            self.module.configured_entry('eslint', settings, outside_prefix, self.repo)
+        )
+        self.assertIsNone(
+            self.module.configured_entry('eslint', settings, external, self.repo)
+        )
+
+    def test_configured_tool_keeps_placeholder_text_in_file_names_literal(self):
+        (self.repo / 'src').mkdir(parents=True)
+        target = self.write('src/{relpath}.ts', 'export {};\n')
+        settings = {
+            'mode': 'lint',
+            'extensions': ['.ts'],
+            'check': ['eslint', '{path}'],
+        }
+        entry = self.module.configured_entry('eslint', settings, target, self.repo)
+        self.assertEqual(entry.command, ['eslint', str(target)])
+
+    def test_config_rejects_host_user_paths_and_non_string_elements_with_exit_two(self):
+        self.write('app.ts', 'export {};\n')
+        invalid_cases = [
+            ('users_write', 'write', ['/Users/alice/bin/eslint', '{relpath}']),
+            ('home_check', 'check', ['/home/bob/bin/eslint', '{relpath}']),
+            (
+                'embedded_users',
+                'check',
+                ['sh', '-c', 'cd /Users/alice/app && npx eslint {relpath}'],
+            ),
+            (
+                'embedded_home',
+                'write',
+                ['sh', '-c', 'cd /home/bob/app && npx eslint --fix {relpath}'],
+            ),
+            ('non_string_element', 'check', ['eslint', 123, '{relpath}']),
+        ]
+        for label, key, command in invalid_cases:
+            with self.subTest(label=label):
+                (self.repo / '.style-gate.json').write_text(
+                    json.dumps(
+                        {
+                            'tools': {
+                                'eslint': {
+                                    'mode': 'lint',
+                                    'extensions': ['.ts'],
+                                    key: command,
+                                }
+                            }
+                        }
+                    )
+                )
+                with self.assertRaises(ValueError):
+                    self.module.load_tool_config(self.repo)
+                code, report = self.cli('--repo', self.repo, 'app.ts')
+                self.assertEqual(code, 2)
+                self.assertIn('error', report)
+                fp_code, fp_report = self.cli('--fingerprint', '--repo', self.repo)
+                self.assertEqual(fp_code, 2)
+                self.assertIn('error', fp_report)
+
+    def test_config_accepts_container_paths(self):
+        (self.repo / '.style-gate.json').write_text(
+            json.dumps(
+                {
+                    'tools': {
+                        'eslint': {
+                            'mode': 'lint',
+                            'extensions': ['.ts'],
+                            'check': ['/app/node_modules/.bin/eslint', '{relpath}'],
+                        }
+                    }
+                }
+            )
+        )
+        loaded = self.module.load_tool_config(self.repo)
+        self.assertEqual(
+            loaded['eslint']['check'],
+            ['/app/node_modules/.bin/eslint', '{relpath}'],
+        )
+
     def test_multiple_go_files_deduplicate_head_and_package_golangci_lint(self):
         events = self.directory / 'events.log'
-        self.stub('goimports',
-                  f'echo "goimports:$2" >> "{events}"\n'
-                  'shift; printf "package main\\n// formatted\\n" > "$1"')
+        self.stub(
+            'goimports',
+            f'echo "goimports:$2" >> "{events}"\n'
+            'shift; printf "package main\\n// formatted\\n" > "$1"',
+        )
         self.stub('git', f'echo "git:$*" >> "{events}"')
-        self.stub('golangci-lint',
-                  f'pwd_dir=$(pwd -P); echo "golangci-lint:$pwd_dir:$*" >> "{events}"')
+        self.stub(
+            'golangci-lint',
+            f'pwd_dir=$(pwd -P); echo "golangci-lint:$pwd_dir:$*" >> "{events}"',
+        )
         self.write('.golangci.yml', '')
         (self.repo / 'pkg').mkdir()
         files = ['a.go', 'b.go', 'pkg/c.go']
@@ -728,14 +1044,21 @@ class StyleGateTests(unittest.TestCase):
         lint_events = [line for line in recorded if line.startswith('golangci-lint:')]
         self.assertEqual(git_events, ['git:rev-parse --verify -q HEAD'])
         resolved_repo = self.repo.resolve()
-        self.assertCountEqual(lint_events, [
-            f'golangci-lint:{resolved_repo}:run --new-from-rev HEAD ./.',
-            f'golangci-lint:{resolved_repo / "pkg"}:run --new-from-rev HEAD ./.',
-        ])
+        self.assertCountEqual(
+            lint_events,
+            [
+                f'golangci-lint:{resolved_repo}:run --new-from-rev HEAD ./.',
+                f'golangci-lint:{resolved_repo / "pkg"}:run --new-from-rev HEAD ./.',
+            ],
+        )
         root_format_indices = [
-            index for index, line in enumerate(recorded)
-            if line in (f'goimports:{resolved_repo / "a.go"}',
-                        f'goimports:{resolved_repo / "b.go"}')
+            index
+            for index, line in enumerate(recorded)
+            if line
+            in (
+                f'goimports:{resolved_repo / "a.go"}',
+                f'goimports:{resolved_repo / "b.go"}',
+            )
         ]
         root_lint_index = recorded.index(
             f'golangci-lint:{resolved_repo}:run --new-from-rev HEAD ./.'
@@ -748,8 +1071,10 @@ class StyleGateTests(unittest.TestCase):
             self.assertTrue(record['mutated'])
             self.assertEqual(record['sha256'], expected_sha)
             self.assertEqual(record['covered_families'], ['Imports'])
-            self.assertEqual([tool['tool'] for tool in record['tools']],
-                             ['goimports', 'golangci-lint'])
+            self.assertEqual(
+                [tool['tool'] for tool in record['tools']],
+                ['goimports', 'golangci-lint'],
+            )
             lint_logs.append(record['tools'][1]['log_path'])
             self.assertTrue(Path(record['tools'][1]['log_path']).is_file())
         self.assertEqual(len(set(lint_logs)), 3)
@@ -761,8 +1086,10 @@ class StyleGateTests(unittest.TestCase):
         self.stub('golangci-lint', f'echo "golangci-lint:$*" >> "{events}"')
         self.use_stub_path()
         self.write('.golangci.yml', '')
-        paths = [self.write('a.go', 'package main\n'),
-                 self.write('b.go', 'package main\n')]
+        paths = [
+            self.write('a.go', 'package main\n'),
+            self.write('b.go', 'package main\n'),
+        ]
         with patch.object(self.module, 'GATE_WORKERS', 1):
             report = self.module.run_gate(self.repo, paths)
         for record in report['files']:
@@ -770,12 +1097,18 @@ class StyleGateTests(unittest.TestCase):
                 if outcome.get('log_path'):
                     self.addCleanup(Path(outcome['log_path']).unlink, missing_ok=True)
         recorded = events.read_text().splitlines()
-        self.assertEqual([line for line in recorded if line.startswith('git:')],
-                         ['git:rev-parse --verify -q HEAD'])
-        self.assertEqual([line for line in recorded if line.startswith('golangci-lint:')],
-                         ['golangci-lint:run --new-from-rev HEAD ./.'])
-        self.assertEqual([record['covered_families'] for record in report['files']],
-                         [['Imports'], ['Imports']])
+        self.assertEqual(
+            [line for line in recorded if line.startswith('git:')],
+            ['git:rev-parse --verify -q HEAD'],
+        )
+        self.assertEqual(
+            [line for line in recorded if line.startswith('golangci-lint:')],
+            ['golangci-lint:run --new-from-rev HEAD ./.'],
+        )
+        self.assertEqual(
+            [record['covered_families'] for record in report['files']],
+            [['Imports'], ['Imports']],
+        )
 
     def test_multiple_go_files_share_preflight_failure_and_unborn_head(self):
         self.stub('goimports', 'exit 0')
@@ -800,8 +1133,10 @@ class StyleGateTests(unittest.TestCase):
         for record in report['files']:
             outcome = record['tools'][1]
             self.assertEqual(outcome['exit_status'], 128)
-            self.assertEqual(outcome['preflight_command'][1:],
-                             ['rev-parse', '--verify', '-q', 'HEAD'])
+            self.assertEqual(
+                outcome['preflight_command'][1:],
+                ['rev-parse', '--verify', '-q', 'HEAD'],
+            )
             log_paths.append(outcome['log_path'])
             self.assertTrue(Path(outcome['log_path']).is_file())
         self.assertEqual(len(set(log_paths)), 2)
@@ -812,8 +1147,10 @@ class StyleGateTests(unittest.TestCase):
         self.stub('golangci-lint', 'exit 0')
         self.use_stub_path()
         self.write('.golangci.yml', '')
-        paths = [self.write('a.go', 'package main\n'),
-                 self.write('b.go', 'package main\n')]
+        paths = [
+            self.write('a.go', 'package main\n'),
+            self.write('b.go', 'package main\n'),
+        ]
         lint_calls = []
 
         def fake_execute(entry, cwd, timeout, environment):
@@ -824,22 +1161,34 @@ class StyleGateTests(unittest.TestCase):
             log = self.directory / f'{entry.tool}-{len(lint_calls)}.log'
             log.write_text('')
             self.addCleanup(log.unlink, missing_ok=True)
-            return {'tool': entry.tool, 'mode': entry.mode, 'command': entry.command,
-                    'exit_status': 0, 'timed_out': False, 'mutated': False,
-                    'diagnostics': None, 'log_path': str(log)}
+            return {
+                'tool': entry.tool,
+                'mode': entry.mode,
+                'command': entry.command,
+                'exit_status': 0,
+                'timed_out': False,
+                'mutated': False,
+                'diagnostics': None,
+                'log_path': str(log),
+            }
 
         with patch.object(self.module, 'GATE_WORKERS', 1):
             with patch.object(self.module, 'execute', side_effect=fake_execute):
-                with patch.object(self.module.time, 'monotonic',
-                                  side_effect=[0.0, 1.0, 2.0, 3.0, 4.0, 100.0]):
+                with patch.object(
+                    self.module.time,
+                    'monotonic',
+                    side_effect=[0.0, 1.0, 2.0, 3.0, 4.0, 100.0],
+                ):
                     report = self.module.run_gate(self.repo, paths, deadline_seconds=10)
         self.assertTrue(report['deadline_exceeded'])
         self.assertEqual(lint_calls, [])
         self.assertEqual(len(report['files']), 1)
         record = report['files'][0]
         self.assertTrue(record['mutated'])
-        self.assertEqual(record['sha256'],
-                         hashlib.sha256(b'package main\n// formatted\n').hexdigest())
+        self.assertEqual(
+            record['sha256'],
+            hashlib.sha256(b'package main\n// formatted\n').hexdigest(),
+        )
         self.assertEqual(record['covered_families'], ['Imports'])
         self.assertEqual([tool['tool'] for tool in record['tools']], ['goimports'])
         self.assertFalse(any(tool['timed_out'] for tool in record['tools']))
@@ -874,10 +1223,13 @@ class StyleGateTests(unittest.TestCase):
         self.assertIsNone(fingerprint['config_sha256'])
         self.assertEqual(fingerprint, second['gate_fingerprint'])
         self.assertEqual(set(fingerprint['tools']), set(self.module.DEFAULT_TOOLS))
-        self.assertEqual(fingerprint['tools']['goimports'], {
-            'path': str(self.bin / 'goimports'),
-            'size': (self.bin / 'goimports').stat().st_size,
-        })
+        self.assertEqual(
+            fingerprint['tools']['goimports'],
+            {
+                'path': str(self.bin / 'goimports'),
+                'size': (self.bin / 'goimports').stat().st_size,
+            },
+        )
         self.assertIsNone(fingerprint['tools']['ruff'])
 
     def test_fingerprint_flag_matches_report_and_runs_no_tools(self):
@@ -900,7 +1252,9 @@ class StyleGateTests(unittest.TestCase):
         ruff_stub = self.stub('ruff', 'exit 0  # longer binary content')
         _, after_binary = self.cli('--fingerprint', '--repo', self.repo)
         self.assertNotEqual(after_binary, baseline)
-        self.assertEqual(after_binary['tools']['ruff']['size'], ruff_stub.stat().st_size)
+        self.assertEqual(
+            after_binary['tools']['ruff']['size'], ruff_stub.stat().st_size
+        )
 
         config = {
             'tools': {
@@ -920,18 +1274,26 @@ class StyleGateTests(unittest.TestCase):
         config_path.write_text(json.dumps(config))
         _, after_config = self.cli('--fingerprint', '--repo', self.repo)
         self.assertNotEqual(after_config, after_binary)
-        self.assertEqual(after_config['config_sha256'],
-                         hashlib.sha256(config_path.read_bytes()).hexdigest())
-        self.assertEqual(after_config['tools']['ruff'], {
-            'path': str(ruff_stub),
-            'size': ruff_stub.stat().st_size,
-            'check': ['ruff', 'check', '--no-cache', '{path}'],
-        })
-        self.assertEqual(after_config['tools']['custom-lint'], {
-            'path': str(ruff_stub),
-            'size': ruff_stub.stat().st_size,
-            'check': ['ruff', 'check', '{path}'],
-        })
+        self.assertEqual(
+            after_config['config_sha256'],
+            hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
+            after_config['tools']['ruff'],
+            {
+                'path': str(ruff_stub),
+                'size': ruff_stub.stat().st_size,
+                'check': ['ruff', 'check', '--no-cache', '{path}'],
+            },
+        )
+        self.assertEqual(
+            after_config['tools']['custom-lint'],
+            {
+                'path': str(ruff_stub),
+                'size': ruff_stub.stat().st_size,
+                'check': ['ruff', 'check', '{path}'],
+            },
+        )
 
         config['tools']['ruff']['check'] = ['ruff', 'check', '--no-fix', '{path}']
         config_path.write_text(json.dumps(config))

@@ -40,6 +40,7 @@ If you receive a manifest, run `python3 "<package>/scripts/review-manifest.py" v
   - The file's `covered_families` entry records those families.
   - Findings from skipped families are not reported.
   - Every other family stays in scope.
+  - If a file's verified report entry has a `format` tool with exit status 0, do not report its layout-only hunks. That layout is gate output, not a finding.
   - A missing report, a `sha256` mismatch against a current file, or a report predating an edit is no evidence.
   - A report whose tools did not run clean over the whole assigned set is also no evidence.
   - If the report provides no evidence, review every family.

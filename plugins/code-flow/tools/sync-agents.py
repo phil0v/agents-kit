@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import runpy
 import sys
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 FORMS_DIR = PACKAGE_ROOT / "harnesses"
+FORMS_PACKAGES = {"antigravity": PACKAGE_ROOT.parent / "agy-agents"}
 FORM_FIELDS = {"claude": "effort", "pi": "thinking"}
 RoleProfiles = runpy.run_path(str(PACKAGE_ROOT / 'scripts/role-profile.py'))['RoleProfiles']
 NATIVE_FORMS = runpy.run_path(str(PACKAGE_ROOT / 'tools/native_agent_forms.py'))
@@ -64,15 +66,15 @@ def sync_directory(target_dir, label, rendered, check, is_managed):
         for filename, text in sorted(rendered.items()):
             target = target_dir / filename
             if not target.is_file() or target.read_text() != text:
-                stale.append(str(target.relative_to(PACKAGE_ROOT)))
+                stale.append(os.path.relpath(target, PACKAGE_ROOT))
     if target_dir.is_dir():
         for target in sorted(target_dir.iterdir()):
             if target.is_file() and is_managed(target) and target.name not in rendered:
                 if check:
-                    stale.append(str(target.relative_to(PACKAGE_ROOT)))
+                    stale.append(os.path.relpath(target, PACKAGE_ROOT))
                 else:
                     target.unlink()
-                    print(f"removed unmatched form: {target.relative_to(PACKAGE_ROOT)}", file=sys.stderr)
+                    print(f"removed unmatched form: {os.path.relpath(target, PACKAGE_ROOT)}", file=sys.stderr)
     return stale
 
 
@@ -99,14 +101,14 @@ def main():
             ('empryo', lambda name: render_empryo(profiles.roles[name], capabilities[name])),
         ):
             rendered = {
-                NATIVE_FORMS['form_filename'](name): renderer(name)
+                NATIVE_FORMS['form_filename'](name, client): renderer(name)
                 for name in profiles.roles
             }
             targets.append((
-                NATIVE_FORMS['form_dir'](PACKAGE_ROOT, client),
+                NATIVE_FORMS['form_dir'](FORMS_PACKAGES.get(client, PACKAGE_ROOT), client),
                 client,
                 rendered,
-                NATIVE_FORMS['is_managed_form'],
+                lambda path, client=client: NATIVE_FORMS['is_managed_form'](path, client),
             ))
     except (ValueError, OSError) as error:
         print(json.dumps({'error': str(error)}), file=sys.stderr)

@@ -27,6 +27,16 @@ SUCCESS = "project-rules: layout valid\n"
 DONE = "Done: run `make test`."
 FRAMEWORKS = "Frameworks: none."
 RULES_TEXT = "# Project rules\n\n## Checks\n\n- Run `make test`.\n"
+HOST_PATH = "Checks command must not contain host user paths"
+DOCKER_TTY = "docker exec must not use interactive TTY flags (-it or -ti)"
+COMPOSE_TTY = "docker compose exec must pass -T"
+VALID_STYLE_GATE = {
+    "eslint": {
+        "mode": "lint",
+        "extensions": [".ts"],
+        "check": ["npx", "eslint", "{relpath}"],
+    }
+}
 
 
 @contextmanager
@@ -41,14 +51,20 @@ def observe_paths(opens, probes, on_open, on_probe):
 
     with ExitStack() as stack:
         for owner, name in opens:
-            stack.enter_context(patch.object(owner, name, wrap(getattr(owner, name), on_open)))
+            stack.enter_context(
+                patch.object(owner, name, wrap(getattr(owner, name), on_open))
+            )
         for owner, name in probes:
-            stack.enter_context(patch.object(owner, name, wrap(getattr(owner, name), on_probe)))
+            stack.enter_context(
+                patch.object(owner, name, wrap(getattr(owner, name), on_probe))
+            )
         yield
 
 
 OPEN_CALLS = ((builtins, "open"), (io, "open"), (os, "open"))
-METADATA_CALLS = tuple((os, name) for name in ("stat", "lstat", "access", "readlink", "listdir", "scandir"))
+METADATA_CALLS = tuple(
+    (os, name) for name in ("stat", "lstat", "access", "readlink", "listdir", "scandir")
+)
 
 
 class ProjectRulesTest(unittest.TestCase):
@@ -82,16 +98,26 @@ class ProjectRulesTest(unittest.TestCase):
 
     def cli(self, *args, env=None):
         return subprocess.run(
-            [sys.executable, str(SCRIPT), *map(str, args)], cwd=self.sandbox, env=env,
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
-            timeout=20, check=False,
+            [sys.executable, str(SCRIPT), *map(str, args)],
+            cwd=self.sandbox,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=20,
+            check=False,
         )
 
     def run_validate(self, *options):
         return self.cli("validate", self.root, *options)
 
     def assert_valid(self, result):
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, SUCCESS, ""), result.stderr)
+        self.assertEqual(
+            (result.returncode, result.stdout, result.stderr),
+            (0, SUCCESS, ""),
+            result.stderr,
+        )
 
     def assert_findings(self, result, *expected):
         self.assertEqual(result.returncode, 1, result.stderr)
@@ -105,7 +131,9 @@ class ProjectRulesTest(unittest.TestCase):
 
     def assert_lines(self, result, *expected):
         self.assert_findings(result, *expected)
-        self.assertEqual(result.stderr.splitlines(), [f"project-rules: {line}" for line in expected])
+        self.assertEqual(
+            result.stderr.splitlines(), [f"project-rules: {line}" for line in expected]
+        )
 
     def verify_case_folding(self):
         probe = self.root / "Case-Probe"
@@ -129,8 +157,12 @@ class ProjectRulesTest(unittest.TestCase):
         self.assert_valid(self.run_validate())
         (self.root / "alias").symlink_to(self.root / "docs", target_is_directory=True)
         self.assert_valid(self.run_validate("--rules-file", "alias/./project-rules.md"))
-        self.assert_findings(self.run_validate("--rules-file", "docs/other.md"), "docs/other.md: missing managed file",
-                             "missing index link to docs/other.md", "extra index link")
+        self.assert_findings(
+            self.run_validate("--rules-file", "docs/other.md"),
+            "docs/other.md: missing managed file",
+            "missing index link to docs/other.md",
+            "extra index link",
+        )
 
     def test_rules_file_may_be_at_the_root(self):
         self.populate("project-rules.md")
@@ -144,22 +176,31 @@ class ProjectRulesTest(unittest.TestCase):
         (self.root / "docs" / "rule-alias.txt").symlink_to("only-here.txt")
         self.rules.write_text(
             "# Project rules\n\n## Checks\n\n[relative](rule-alias.txt#absent) [a](http://example.test) "
-            "[b](https://example.test) [fragment](#fragment) [self](project-rules.md)\n", encoding="utf-8",
+            "[b](https://example.test) [fragment](#fragment) [self](project-rules.md)\n",
+            encoding="utf-8",
         )
         self.assert_valid(self.run_validate())
 
     def test_in_file_link_rejects_a_symlink_cycle(self):
         self.populate()
         (self.root / "docs" / "cycle.md").symlink_to("cycle.md")
-        self.rules.write_text("# Project rules\n\n## Checks\n\n[cycle](cycle.md)\n", encoding="utf-8")
-        self.assert_lines(self.run_validate(), f"{RULES}: line 5: invalid link 'cycle.md': too many symbolic links")
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n[cycle](cycle.md)\n", encoding="utf-8"
+        )
+        self.assert_lines(
+            self.run_validate(),
+            f"{RULES}: line 5: invalid link 'cycle.md': too many symbolic links",
+        )
 
     def test_file_links_reject_directory_only_suffixes_before_normalization(self):
         self.populate()
         for suffix in ("/", "/.", "/#section", "/.#section"):
             with self.subTest(suffix=suffix):
                 self.block(f"[rules]({RULES}{suffix})")
-                self.rules.write_text(f"# Project rules\n\n## Checks\n\n[target](project-rules.md{suffix})\n", encoding="utf-8")
+                self.rules.write_text(
+                    f"# Project rules\n\n## Checks\n\n[target](project-rules.md{suffix})\n",
+                    encoding="utf-8",
+                )
                 self.assert_findings(
                     self.run_validate(),
                     f"AGENTS.md: line 4: invalid index link {RULES + suffix!r}: link target is not a regular file",
@@ -191,10 +232,15 @@ class ProjectRulesTest(unittest.TestCase):
 
     def test_links_accept_directory_only_symlink_targets_with_a_file_after_them(self):
         self.populate("docs/rules/project-rules.md")
-        (self.root / "direct").symlink_to(f"{self.root / 'docs/rules'}/", target_is_directory=True)
+        (self.root / "direct").symlink_to(
+            f"{self.root / 'docs/rules'}/", target_is_directory=True
+        )
         (self.root / "chained").symlink_to("direct/.", target_is_directory=True)
         self.block("[rules](chained/project-rules.md)")
-        self.rules.write_text("# Project rules\n\n## Checks\n\n[self](../../chained/project-rules.md)\n", encoding="utf-8")
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n[self](../../chained/project-rules.md)\n",
+            encoding="utf-8",
+        )
         self.assert_valid(self.run_validate("--rules-file", "chained/project-rules.md"))
 
     def test_missing_index_and_bad_markers(self):
@@ -219,21 +265,32 @@ class ProjectRulesTest(unittest.TestCase):
         self.populate()
         for separator in ("\u2028", "\f"):
             with self.subTest(separator=separator):
-                self.index.write_bytes((
-                    f"{BEGIN}\r\n~~~\rtext{separator}~~~\n[masked](hidden.md)\r\n~~~\r\n{self.link}\r\n"
-                    f"[visible](missing.md)\r{END}\n"
-                ).encode("utf-8"))
-                self.assert_lines(self.run_validate(), "AGENTS.md: line 7: invalid index link 'missing.md': missing link target",
-                                  'AGENTS.md: line 8: index block has no "Done:" line', 'AGENTS.md: line 8: index block has no "Frameworks:" line')
+                self.index.write_bytes(
+                    (
+                        f"{BEGIN}\r\n~~~\rtext{separator}~~~\n[masked](hidden.md)\r\n~~~\r\n{self.link}\r\n"
+                        f"[visible](missing.md)\r{END}\n"
+                    ).encode("utf-8")
+                )
+                self.assert_lines(
+                    self.run_validate(),
+                    "AGENTS.md: line 7: invalid index link 'missing.md': missing link target",
+                    'AGENTS.md: line 8: index block has no "Done:" line',
+                    'AGENTS.md: line 8: index block has no "Frameworks:" line',
+                )
 
     def test_rule_fences_and_findings_use_physical_lines(self):
         self.populate()
         for separator in ("\u2028", "\f"):
             with self.subTest(separator=separator):
-                self.rules.write_bytes((
-                    f"# Project rules\r\n## Checks\r\n~~~\rtext{separator}~~~\n## Masked\r\n~~~\r[visible](missing.md)\n"
-                ).encode("utf-8"))
-                self.assert_lines(self.run_validate(), f"{RULES}: line 7: invalid link 'missing.md': missing link target")
+                self.rules.write_bytes(
+                    (
+                        f"# Project rules\r\n## Checks\r\n~~~\rtext{separator}~~~\n## Masked\r\n~~~\r[visible](missing.md)\n"
+                    ).encode("utf-8")
+                )
+                self.assert_lines(
+                    self.run_validate(),
+                    f"{RULES}: line 7: invalid link 'missing.md': missing link target",
+                )
 
     def test_missing_canonical_link_and_file(self):
         self.populate()
@@ -252,18 +309,37 @@ class ProjectRulesTest(unittest.TestCase):
         for index_target, rule_target, finding in (
             ("absent.md", "absent.md", "missing link target"),
             ("absent.md#a", "absent.md#a", "missing link target"),
-            ("absent/../AGENTS.md", "absent/../project-rules.md", "missing link target"),
+            (
+                "absent/../AGENTS.md",
+                "absent/../project-rules.md",
+                "missing link target",
+            ),
             ("folder", "folder", "link target is not a regular file"),
             ("ftp://example.test/a", "ftp://example.test/a", "disallowed link scheme"),
             ("/absolute.md", "/absolute.md", "absolute or drive-qualified link target"),
-            ("C:/absolute.md", "C:/absolute.md", "absolute or drive-qualified link target"),
-            ("//host/share/a.md", "//host/share/a.md", "absolute or drive-qualified link target"),
-            ("../external/outside.txt", "../../external/outside.txt", "path escapes project root"),
+            (
+                "C:/absolute.md",
+                "C:/absolute.md",
+                "absolute or drive-qualified link target",
+            ),
+            (
+                "//host/share/a.md",
+                "//host/share/a.md",
+                "absolute or drive-qualified link target",
+            ),
+            (
+                "../external/outside.txt",
+                "../../external/outside.txt",
+                "path escapes project root",
+            ),
             ("outside.txt", "../outside.txt", "symlink path escapes project root"),
         ):
             with self.subTest(target=index_target):
                 self.block(self.link, f"[target]({index_target})")
-                self.rules.write_text(f"# Project rules\n\n## Checks\n\n[target]({rule_target})\n", encoding="utf-8")
+                self.rules.write_text(
+                    f"# Project rules\n\n## Checks\n\n[target]({rule_target})\n",
+                    encoding="utf-8",
+                )
                 self.assert_lines(
                     self.run_validate(),
                     f"AGENTS.md: line 5: invalid index link {index_target!r}: {finding}",
@@ -276,8 +352,14 @@ class ProjectRulesTest(unittest.TestCase):
         (self.root / "alias.md").symlink_to(self.rules)
         for link, finding in (
             ("[extra](extra.txt)", "line 5: extra index link 'extra.txt'"),
-            ("[extra](http://example.test)", "line 5: invalid index link 'http://example.test': extra index link"),
-            ("[extra](https://example.test)", "line 5: invalid index link 'https://example.test': extra index link"),
+            (
+                "[extra](http://example.test)",
+                "line 5: invalid index link 'http://example.test': extra index link",
+            ),
+            (
+                "[extra](https://example.test)",
+                "line 5: invalid index link 'https://example.test': extra index link",
+            ),
             ("[extra](#only)", "line 5: invalid index link '#only': extra index link"),
             (self.link, "line 5: duplicate index link 'docs/project-rules.md'"),
             ("[alias](alias.md)", "line 5: duplicate index link 'alias.md'"),
@@ -293,25 +375,46 @@ class ProjectRulesTest(unittest.TestCase):
         self.assert_valid(self.run_validate())
         (self.root / "other.md").write_text("x\n", encoding="utf-8")
         self.block("[rules](other.md)")
-        self.assert_lines(self.run_validate(), "AGENTS.md: line 4: extra index link 'other.md'", f"AGENTS.md: line 5: missing index link to {RULES}")
+        self.assert_lines(
+            self.run_validate(),
+            "AGENTS.md: line 4: extra index link 'other.md'",
+            f"AGENTS.md: line 5: missing index link to {RULES}",
+        )
         self.block()
-        self.assert_lines(self.run_validate(), f"AGENTS.md: line 4: missing index link to {RULES}")
+        self.assert_lines(
+            self.run_validate(), f"AGENTS.md: line 4: missing index link to {RULES}"
+        )
         self.block("Done: x", "  Frameworks: y  ")
-        self.assert_lines(self.run_validate(), f"AGENTS.md: line 6: missing index link to {RULES}")
+        self.assert_lines(
+            self.run_validate(), f"AGENTS.md: line 6: missing index link to {RULES}"
+        )
         self.write_index((BEGIN, "not Done:", "Frameworks", "Frameworks: yes", END))
-        self.assert_lines(self.run_validate(), 'AGENTS.md: line 5: index block has no "Done:" line', f"AGENTS.md: line 5: missing index link to {RULES}")
+        self.assert_lines(
+            self.run_validate(),
+            'AGENTS.md: line 5: index block has no "Done:" line',
+            f"AGENTS.md: line 5: missing index link to {RULES}",
+        )
 
     def test_bad_rule_structure_and_encoding(self):
         self.populate()
         for content, finding in (
             (b" \t\n", "blank rules file"),
             (b"# Rules\n\xff", "invalid UTF-8"),
-            (b"Rules\n=====\n####### Not ATX\n    # Indented\n#\t \n", "line 1: expected exactly one H1 (found none)"),
-            (b"# Rules\n## Checks\n   #\tFirst\n# Second\n", "line 4: expected exactly one H1 (found another H1)"),
-            (b"# Rules\n## Checks\n ## Duplicate\n## Duplicate \t\n", "line 4: duplicate heading '## Duplicate'"),
+            (
+                b"Rules\n=====\n####### Not ATX\n    # Indented\n#\t \n",
+                "line 1: expected exactly one H1 (found none)",
+            ),
+            (
+                b"# Rules\n## Checks\n   #\tFirst\n# Second\n",
+                "line 4: expected exactly one H1 (found another H1)",
+            ),
+            (
+                b"# Rules\n## Checks\n ## Duplicate\n## Duplicate \t\n",
+                "line 4: duplicate heading '## Duplicate'",
+            ),
             (b"# Rules\n", 'line 1: missing "## Checks" heading'),
             (b"# Rules\n### Checks\n", 'line 1: missing "## Checks" heading'),
-        (b"# Rules\n##  Checks\n", 'line 1: missing "## Checks" heading'),
+            (b"# Rules\n##  Checks\n", 'line 1: missing "## Checks" heading'),
         ):
             with self.subTest(content=content):
                 self.rules.write_bytes(content)
@@ -320,21 +423,39 @@ class ProjectRulesTest(unittest.TestCase):
     def test_checks_heading_accepts_closing_hashes(self):
         self.populate()
         self.rules.write_text("# Rules\n\n## Checks ##\n\n- x\n", encoding="utf-8")
-        self.assert_findings(self.run_validate(), f"{RULES}: line 1: missing", "## Checks")
+        self.assert_findings(
+            self.run_validate(), f"{RULES}: line 1: missing", "## Checks"
+        )
 
     def test_known_h2_headings_must_follow_the_canonical_order(self):
         self.populate()
         self.rules.write_text(
             "# Project rules\n\n## Checks\n\n## Ownership\n\n## Approaches\n\n## Code style\n\n## Design\n\n## Framework\n"
-            "\n## Extra\n\n## Appendix\n", encoding="utf-8",
+            "\n## Extra\n\n## Appendix\n",
+            encoding="utf-8",
         )
         self.assert_valid(self.run_validate())
-        self.rules.write_text("# Project rules\n\n## Framework\n\n## Checks\n\n## Ownership\n\n## Custom\n", encoding="utf-8")
-        self.assert_lines(self.run_validate(), f'{RULES}: line 5: "## Checks" must come before "## Framework"',
-                          f'{RULES}: line 7: "## Ownership" must come before "## Framework"')
-        self.rules.write_text("# Project rules\n\n## Checks\n\n## Design\n\n## Code style\n\n## Framework\n", encoding="utf-8")
-        self.assert_lines(self.run_validate(), f'{RULES}: line 7: "## Code style" must come before "## Design"')
-        self.rules.write_text("# Project rules\n\n## Framework\n\n## Design\n\n## Code style\n\n## Approaches\n\n## Ownership\n\n## Checks\n", encoding="utf-8")
+        self.rules.write_text(
+            "# Project rules\n\n## Framework\n\n## Checks\n\n## Ownership\n\n## Custom\n",
+            encoding="utf-8",
+        )
+        self.assert_lines(
+            self.run_validate(),
+            f'{RULES}: line 5: "## Checks" must come before "## Framework"',
+            f'{RULES}: line 7: "## Ownership" must come before "## Framework"',
+        )
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n## Design\n\n## Code style\n\n## Framework\n",
+            encoding="utf-8",
+        )
+        self.assert_lines(
+            self.run_validate(),
+            f'{RULES}: line 7: "## Code style" must come before "## Design"',
+        )
+        self.rules.write_text(
+            "# Project rules\n\n## Framework\n\n## Design\n\n## Code style\n\n## Approaches\n\n## Ownership\n\n## Checks\n",
+            encoding="utf-8",
+        )
         self.assert_lines(
             self.run_validate(),
             f'{RULES}: line 5: "## Design" must come before "## Framework"',
@@ -375,24 +496,39 @@ class ProjectRulesTest(unittest.TestCase):
             ("", "repository-relative file path"),
         ):
             with self.subTest(rules_file=rules_file):
-                self.assert_findings(self.run_validate(f"--rules-file={rules_file}"), "rules file ", finding)
+                self.assert_findings(
+                    self.run_validate(f"--rules-file={rules_file}"),
+                    "rules file ",
+                    finding,
+                )
 
     def test_usage_errors(self):
         self.index.touch()
         for args in (
-            (), ("validate", self.index), ("validate", self.root, "--rules-file", "-rules"),
-            ("validate", self.root, "--rules-dir", "docs"), ("prepare",), ("prepare", self.index),
-            ("prepare", self.root, "--draft-dir", "x"), ("bogus", self.root), ("validate", self.root, self.root),
+            (),
+            ("validate", self.index),
+            ("validate", self.root, "--rules-file", "-rules"),
+            ("validate", self.root, "--rules-dir", "docs"),
+            ("prepare",),
+            ("prepare", self.index),
+            ("prepare", self.root, "--draft-dir", "x"),
+            ("bogus", self.root),
+            ("validate", self.root, self.root),
         ):
             with self.subTest(args=args):
                 result = self.cli(*args)
-                self.assertEqual((result.returncode, result.stdout), (2, ""), result.stderr)
+                self.assertEqual(
+                    (result.returncode, result.stdout), (2, ""), result.stderr
+                )
                 self.assertIn("error:", result.stderr)
 
     def test_python_version_guard(self):
         module = load_script_module(SCRIPT, "project_rules_guard")
         errors = io.StringIO()
-        with patch.object(module.sys, "version_info", (3, 8, 0, "final", 0)), patch("sys.stderr", errors):
+        with (
+            patch.object(module.sys, "version_info", (3, 8, 0, "final", 0)),
+            patch("sys.stderr", errors),
+        ):
             self.assertEqual(module.main(["validate", str(self.root)]), 2)
         self.assertEqual(errors.getvalue(), "error: Python 3.9 or newer is required\n")
         self.assertFalse(list(self.root.iterdir()))
@@ -400,14 +536,19 @@ class ProjectRulesTest(unittest.TestCase):
     def test_index_slot_collisions(self):
         for rules_file in ("AGENTS.md", "AGENTS.md/nested.md"):
             with self.subTest(rules_file=rules_file):
-                self.assert_findings(self.run_validate(f"--rules-file={rules_file}"), "file/directory collision")
+                self.assert_findings(
+                    self.run_validate(f"--rules-file={rules_file}"),
+                    "file/directory collision",
+                )
         self.assertFalse(self.index.exists())
 
     def test_case_folding_storage_rejects_the_absent_index_slot_collision(self):
         if not self.verify_case_folding():
             self.skipTest("fixture filesystem has distinct case-sensitive slots")
         self.assertFalse(self.index.exists())
-        self.assert_findings(self.run_validate("--rules-file=agents.md"), "file/directory collision")
+        self.assert_findings(
+            self.run_validate("--rules-file=agents.md"), "file/directory collision"
+        )
 
     def test_case_sensitive_storage_accepts_distinct_index_and_rules_slots(self):
         if self.verify_case_folding():
@@ -418,12 +559,18 @@ class ProjectRulesTest(unittest.TestCase):
 
     def test_misspelled_rules_file_component_is_rejected_on_every_filesystem(self):
         self.populate("docs/Project-Rules.md")
-        self.assert_findings(self.run_validate(), "rules file 'docs/project-rules.md': component 'project-rules.md' differs in case from existing 'Project-Rules.md'")
+        self.assert_findings(
+            self.run_validate(),
+            "rules file 'docs/project-rules.md': component 'project-rules.md' differs in case from existing 'Project-Rules.md'",
+        )
         self.assert_valid(self.run_validate("--rules-file=docs/Project-Rules.md"))
 
     def test_managed_slot_differing_from_existing_entry_by_case_only_is_a_finding(self):
         self.populate()
-        for path, alternate in ((self.index, "agents.md"), (self.rules, "Project-Rules.md")):
+        for path, alternate in (
+            (self.index, "agents.md"),
+            (self.rules, "Project-Rules.md"),
+        ):
             if path == self.index and not self.verify_case_folding():
                 continue
             with self.subTest(path=path.name):
@@ -432,8 +579,11 @@ class ProjectRulesTest(unittest.TestCase):
                 path.unlink()
                 other.write_bytes(original)
                 try:
-                    expected = (f"{path.relative_to(self.root).as_posix()}: case collision with {alternate!r}" if path == self.index
-                                else f"rules file {RULES!r}: component {path.name!r} differs in case from existing {alternate!r}")
+                    expected = (
+                        f"{path.relative_to(self.root).as_posix()}: case collision with {alternate!r}"
+                        if path == self.index
+                        else f"rules file {RULES!r}: component {path.name!r} differs in case from existing {alternate!r}"
+                    )
                     self.assert_findings(self.run_validate(), expected)
                 finally:
                     other.unlink()
@@ -443,12 +593,19 @@ class ProjectRulesTest(unittest.TestCase):
         self.populate("rules&v2.md")
         self.assert_valid(self.run_validate("--rules-file=rules&v2.md"))
         self.populate("rules&amp;v2.md")
-        self.assert_findings(self.run_validate("--rules-file=rules&amp;v2.md"), "destination grammar")
+        self.assert_findings(
+            self.run_validate("--rules-file=rules&amp;v2.md"), "destination grammar"
+        )
 
     def test_git_directory_is_reserved(self):
         (self.root / ".git").mkdir()
-        self.assert_findings(self.run_validate("--rules-file=.git/x.md"), "rules file '.git/x.md': .git is reserved")
-        self.assert_findings(self.run_validate("--rules-file=docs/../.GIT/x.md"), ".git is reserved")
+        self.assert_findings(
+            self.run_validate("--rules-file=.git/x.md"),
+            "rules file '.git/x.md': .git is reserved",
+        )
+        self.assert_findings(
+            self.run_validate("--rules-file=docs/../.GIT/x.md"), ".git is reserved"
+        )
 
     def test_index_entity_like_file_spellings_are_not_decoded_or_split(self):
         self.populate()
@@ -456,7 +613,11 @@ class ProjectRulesTest(unittest.TestCase):
             with self.subTest(link=link):
                 (self.root / link).symlink_to(self.rules)
                 self.block(f"[rules]({link})")
-                self.assert_findings(self.run_validate(), f"invalid index link {link!r}: destination grammar", f"missing index link to {RULES}")
+                self.assert_findings(
+                    self.run_validate(),
+                    f"invalid index link {link!r}: destination grammar",
+                    f"missing index link to {RULES}",
+                )
                 (self.root / link).unlink()
 
     def test_index_code_and_comments_are_opaque(self):
@@ -473,12 +634,23 @@ class ProjectRulesTest(unittest.TestCase):
         for wrapper in ("`{}`", "<!-- {} -->", "<!-- `\n\n{}\n-->"):
             with self.subTest(wrapper=wrapper):
                 self.block(wrapper.format(self.link))
-                self.assert_findings(self.run_validate(), f"missing index link to {RULES}")
+                self.assert_findings(
+                    self.run_validate(), f"missing index link to {RULES}"
+                )
 
     def test_literal_runs_escaped_openers_images_and_separated_link_parts(self):
         self.populate()
-        self.block("`", "", self.link, "`", r"\<!--", r"\[escaped](missing.md)", "![image](missing.md)",
-                   "[broken]<!-- comment -->(missing.md)", "[bro`code`ken](missing.md)")
+        self.block(
+            "`",
+            "",
+            self.link,
+            "`",
+            r"\<!--",
+            r"\[escaped](missing.md)",
+            "![image](missing.md)",
+            "[broken]<!-- comment -->(missing.md)",
+            "[bro`code`ken](missing.md)",
+        )
         self.assert_valid(self.run_validate())
 
     def test_rule_code_and_comments_are_opaque(self):
@@ -496,10 +668,18 @@ class ProjectRulesTest(unittest.TestCase):
             "![image](missing.md)",
         ):
             with self.subTest(masked=masked):
-                self.rules.write_text(f"# Project rules\n\n## Checks\n\n{masked}\n", encoding="utf-8")
+                self.rules.write_text(
+                    f"# Project rules\n\n## Checks\n\n{masked}\n", encoding="utf-8"
+                )
                 self.assert_valid(self.run_validate())
-        self.rules.write_text("# Project rules\n\n## Checks\n\n`[masked](missing.md)` [visible](missing.md)\n", encoding="utf-8")
-        self.assert_lines(self.run_validate(), f"{RULES}: line 5: invalid link 'missing.md': missing link target")
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n`[masked](missing.md)` [visible](missing.md)\n",
+            encoding="utf-8",
+        )
+        self.assert_lines(
+            self.run_validate(),
+            f"{RULES}: line 5: invalid link 'missing.md': missing link target",
+        )
 
     def test_rule_links_skip_fragments_and_external_targets(self):
         self.populate()
@@ -528,11 +708,17 @@ class ProjectRulesTest(unittest.TestCase):
                 if finding is None:
                     self.assert_valid(self.run_validate())
                 else:
-                    self.assert_lines(self.run_validate(), f"{RULES}: line 5: {finding}")
+                    self.assert_lines(
+                        self.run_validate(), f"{RULES}: line 5: {finding}"
+                    )
 
     def test_index_images_do_not_count_or_hide_following_links(self):
         self.populate()
-        for image in ("![complete](missing.md)", "![nested](part[not-a-link](missing.md))", "![unfinished](missing.md"):
+        for image in (
+            "![complete](missing.md)",
+            "![nested](part[not-a-link](missing.md))",
+            "![unfinished](missing.md",
+        ):
             with self.subTest(image=image):
                 self.block(image, self.link)
                 self.assert_valid(self.run_validate())
@@ -540,31 +726,67 @@ class ProjectRulesTest(unittest.TestCase):
     def test_comments_cannot_overlap_markers_or_cross_fences_inside_block(self):
         self.populate()
         self.write_index(("<!-- comment", BEGIN, self.link, END, "-->"))
-        self.assert_findings(self.run_validate(), "HTML comment overlaps a project-rules marker")
+        self.assert_findings(
+            self.run_validate(), "HTML comment overlaps a project-rules marker"
+        )
         self.write_index((BEGIN, self.link, "<!-- unclosed", END))
-        self.assert_findings(self.run_validate(), "unclosed HTML comment before the end marker")
+        self.assert_findings(
+            self.run_validate(), "unclosed HTML comment before the end marker"
+        )
         self.block(self.link, "<!-- comment", "~~~", "code", "~~~", "-->")
-        self.assert_findings(self.run_validate(), "unclosed HTML comment in the project-rules block")
+        self.assert_findings(
+            self.run_validate(), "unclosed HTML comment in the project-rules block"
+        )
 
     def test_invalid_index_fields_are_not_silently_skipped(self):
         self.populate()
         (self.root / "extra.md").touch()
-        for field in ("<extra.md>)", 'extra.md "title")', "extra (nested).md)", r"extra\.md)", "", ")", "extra.md", "extra%20.md)", "extra.md?query)"):
+        for field in (
+            "<extra.md>)",
+            'extra.md "title")',
+            "extra (nested).md)",
+            r"extra\.md)",
+            "",
+            ")",
+            "extra.md",
+            "extra%20.md)",
+            "extra.md?query)",
+        ):
             with self.subTest(field=field):
                 self.block(self.link, f"[extra]({field}")
-                self.assert_findings(self.run_validate(), "AGENTS.md: line 5: invalid index link")
+                self.assert_findings(
+                    self.run_validate(), "AGENTS.md: line 5: invalid index link"
+                )
 
     def test_nested_destination_is_one_invalid_candidate_even_with_masked_text(self):
         self.populate()
         self.block(self.link, "[outer](x `code` [inner](missing.md))")
         result = self.run_validate()
-        self.assert_findings(result, "invalid index link 'x `code` [inner](missing.md)'")
+        self.assert_findings(
+            result, "invalid index link 'x `code` [inner](missing.md)'"
+        )
         self.assertEqual(len(result.stderr.splitlines()), 1)
 
     def test_fenced_markers_links_and_headings_are_invisible(self):
         self.populate()
-        self.write_index(("```md", BEGIN, "[bogus](missing.md)", END, "```", BEGIN, DONE, FRAMEWORKS, self.link, END))
-        self.rules.write_text("# Project rules\n\n## Checks\n\n~~~markdown\n# Masked\n# Extra\n[bad](absent)\n~~~\n", encoding="utf-8")
+        self.write_index(
+            (
+                "```md",
+                BEGIN,
+                "[bogus](missing.md)",
+                END,
+                "```",
+                BEGIN,
+                DONE,
+                FRAMEWORKS,
+                self.link,
+                END,
+            )
+        )
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n~~~markdown\n# Masked\n# Extra\n[bad](absent)\n~~~\n",
+            encoding="utf-8",
+        )
         self.assert_valid(self.run_validate())
         self.write_index(("```md", BEGIN, END, "```"))
         self.assert_findings(self.run_validate(), "missing project-rules markers")
@@ -582,43 +804,88 @@ class ProjectRulesTest(unittest.TestCase):
     def test_false_closers_do_not_unmask_and_longer_close_does(self):
         self.populate()
         for char, other in (("`", "~"), ("~", "`")):
-            for candidate in ("inline " + char * 4, "    " + char * 4, "\t" + char * 4, " \t" + char * 4, char * 3, other * 4, char * 4 + " trailing"):
+            for candidate in (
+                "inline " + char * 4,
+                "    " + char * 4,
+                "\t" + char * 4,
+                " \t" + char * 4,
+                char * 3,
+                other * 4,
+                char * 4 + " trailing",
+            ):
                 with self.subTest(candidate=candidate):
-                    fence = (char * 4 + "example", candidate, "[masked](missing.md)", "   " + char * 5 + "\t")
+                    fence = (
+                        char * 4 + "example",
+                        candidate,
+                        "[masked](missing.md)",
+                        "   " + char * 5 + "\t",
+                    )
                     self.block(self.link, *fence)
                     self.assert_valid(self.run_validate())
                     self.block(self.link, *fence, "[visible](missing.md)")
-                    self.assert_findings(self.run_validate(), "invalid index link 'missing.md': missing link target")
+                    self.assert_findings(
+                        self.run_validate(),
+                        "invalid index link 'missing.md': missing link target",
+                    )
 
     def test_unclosed_fence_in_the_index_reports_the_opener_line(self):
         self.populate()
         for run in ("```", "~~~"):
             with self.subTest(run=run):
-                self.write_index((BEGIN, DONE, FRAMEWORKS, self.link, END, run, "[masked](missing.md)", BEGIN, END))
-                self.assert_lines(self.run_validate(), "AGENTS.md: line 6: unclosed fence")
+                self.write_index(
+                    (
+                        BEGIN,
+                        DONE,
+                        FRAMEWORKS,
+                        self.link,
+                        END,
+                        run,
+                        "[masked](missing.md)",
+                        BEGIN,
+                        END,
+                    )
+                )
+                self.assert_lines(
+                    self.run_validate(), "AGENTS.md: line 6: unclosed fence"
+                )
         self.write_index(("```", "[bogus](missing.md)", BEGIN, END))
         self.assert_lines(self.run_validate(), "AGENTS.md: line 1: unclosed fence")
         self.write_index(("````", "~~~", "[bogus](missing.md)", END, BEGIN))
         self.assert_lines(self.run_validate(), "AGENTS.md: line 1: unclosed fence")
         self.write_index((BEGIN, DONE, FRAMEWORKS, "[bad](missing.md)", END, "```"))
-        self.assert_lines(self.run_validate(), "AGENTS.md: line 4: invalid index link 'missing.md': missing link target",
-                          f"AGENTS.md: line 5: missing index link to {RULES}", "AGENTS.md: line 6: unclosed fence")
+        self.assert_lines(
+            self.run_validate(),
+            "AGENTS.md: line 4: invalid index link 'missing.md': missing link target",
+            f"AGENTS.md: line 5: missing index link to {RULES}",
+            "AGENTS.md: line 6: unclosed fence",
+        )
 
     def test_unclosed_fence_in_the_rules_file_is_masked_through_eof(self):
         self.populate()
         for run in ("```", "~~~"):
             with self.subTest(run=run):
-                self.rules.write_text(f"# Project rules\n\n## Checks\n\n{run}example\n# Extra\n[bad](absent)\n", encoding="utf-8")
-                self.assert_lines(self.run_validate(), f"{RULES}: line 5: unclosed fence")
+                self.rules.write_text(
+                    f"# Project rules\n\n## Checks\n\n{run}example\n# Extra\n[bad](absent)\n",
+                    encoding="utf-8",
+                )
+                self.assert_lines(
+                    self.run_validate(), f"{RULES}: line 5: unclosed fence"
+                )
 
     def test_block_budget(self):
         self.populate()
         self.block(self.link, *("filler" for _ in range(8)), "", "   ")
         self.assert_valid(self.run_validate())
         self.block(self.link, *("filler" for _ in range(10)))
-        self.assert_lines(self.run_validate(), "AGENTS.md: line 15: index block has 13 nonblank lines; the budget is 12")
+        self.assert_lines(
+            self.run_validate(),
+            "AGENTS.md: line 15: index block has 13 nonblank lines; the budget is 12",
+        )
         self.block(*("x" for _ in range(18)), self.link)
-        self.assert_lines(self.run_validate(), "AGENTS.md: line 23: index block has 21 nonblank lines; the budget is 12")
+        self.assert_lines(
+            self.run_validate(),
+            "AGENTS.md: line 23: index block has 21 nonblank lines; the budget is 12",
+        )
 
     def test_block_word_budget(self):
         self.populate()
@@ -626,12 +893,21 @@ class ProjectRulesTest(unittest.TestCase):
         self.block(self.link, *([filler] * 5), " ".join(["word"] * 18))
         self.assert_valid(self.run_validate())
         self.block(self.link, *([" ".join(["word"] * 24)] * 6))
-        self.assert_lines(self.run_validate(), "AGENTS.md: line 11: index block has 151 words; the budget is 150")
+        self.assert_lines(
+            self.run_validate(),
+            "AGENTS.md: line 11: index block has 151 words; the budget is 150",
+        )
         self.block(*([" ".join(["word"] * 30)] * 6), self.link)
-        self.assert_lines(self.run_validate(), "AGENTS.md: line 11: index block has 187 words; the budget is 150")
+        self.assert_lines(
+            self.run_validate(),
+            "AGENTS.md: line 11: index block has 187 words; the budget is 150",
+        )
 
     def draft_index(self, drafts, *links):
-        (drafts / "AGENTS.md").write_text("\n".join(("# Index", BEGIN, DONE, FRAMEWORKS, *links, END)) + "\n", encoding="utf-8")
+        (drafts / "AGENTS.md").write_text(
+            "\n".join(("# Index", BEGIN, DONE, FRAMEWORKS, *links, END)) + "\n",
+            encoding="utf-8",
+        )
 
     def test_draft_dir_replaces_disk_content(self):
         self.populate()
@@ -641,20 +917,35 @@ class ProjectRulesTest(unittest.TestCase):
         self.draft_index(drafts, self.link)
         (drafts / self.rules.name).write_text(RULES_TEXT, encoding="utf-8")
         self.assert_valid(self.run_validate("--draft-dir", drafts))
-        self.assert_findings(self.run_validate(), f"{RULES}: line 1: expected exactly one H1")
+        self.assert_findings(
+            self.run_validate(), f"{RULES}: line 1: expected exactly one H1"
+        )
         (drafts / self.rules.name).write_text("broken\n", encoding="utf-8")
         self.rules.write_text(RULES_TEXT, encoding="utf-8")
-        self.assert_lines(self.run_validate("--draft-dir", drafts), f"{RULES}: line 1: expected exactly one H1 (found none)",
-                          f'{RULES}: line 1: missing "## Checks" heading')
+        self.assert_lines(
+            self.run_validate("--draft-dir", drafts),
+            f"{RULES}: line 1: expected exactly one H1 (found none)",
+            f'{RULES}: line 1: missing "## Checks" heading',
+        )
         (drafts / self.rules.name).write_bytes(b"# \xff\n")
-        self.assert_lines(self.run_validate("--draft-dir", drafts), f"{RULES}: invalid UTF-8")
+        self.assert_lines(
+            self.run_validate("--draft-dir", drafts), f"{RULES}: invalid UTF-8"
+        )
         (drafts / self.rules.name).unlink()
         (drafts / self.rules.name).mkdir()
-        self.assert_lines(self.run_validate("--draft-dir", drafts), f"{RULES}: not a regular file")
+        self.assert_lines(
+            self.run_validate("--draft-dir", drafts), f"{RULES}: not a regular file"
+        )
         (drafts / self.rules.name).rmdir()
-        self.assert_lines(self.run_validate("--draft-dir", drafts), f"{RULES}: missing draft file")
+        self.assert_lines(
+            self.run_validate("--draft-dir", drafts), f"{RULES}: missing draft file"
+        )
         (drafts / "AGENTS.md").unlink()
-        self.assert_lines(self.run_validate("--draft-dir", drafts), "AGENTS.md: missing draft file", f"{RULES}: missing draft file")
+        self.assert_lines(
+            self.run_validate("--draft-dir", drafts),
+            "AGENTS.md: missing draft file",
+            f"{RULES}: missing draft file",
+        )
 
     def test_draft_dir_must_be_an_existing_directory(self):
         self.populate()
@@ -678,7 +969,9 @@ class ProjectRulesTest(unittest.TestCase):
         self.assert_valid(self.run_validate("--draft-dir", drafts))
         self.index.write_text("", encoding="utf-8")
         self.draft_index(drafts)
-        self.assert_findings(self.run_validate("--draft-dir", drafts), f"missing index link to {RULES}")
+        self.assert_findings(
+            self.run_validate("--draft-dir", drafts), f"missing index link to {RULES}"
+        )
 
     def test_draft_for_index_to_absent_rules_file(self):
         drafts = self.sandbox / "drafts"
@@ -687,7 +980,9 @@ class ProjectRulesTest(unittest.TestCase):
         (drafts / "project-rules.md").write_text(RULES_TEXT, encoding="utf-8")
         self.assert_valid(self.run_validate("--draft-dir", drafts))
         (drafts / "project-rules.md").unlink()
-        self.assert_findings(self.run_validate("--draft-dir", drafts), f"{RULES}: missing draft file")
+        self.assert_findings(
+            self.run_validate("--draft-dir", drafts), f"{RULES}: missing draft file"
+        )
 
     def test_managed_symlink_leaves_are_rejected_not_read(self):
         self.populate()
@@ -699,7 +994,10 @@ class ProjectRulesTest(unittest.TestCase):
                 path.unlink()
                 path.symlink_to(sentinel)
                 result = self.run_validate()
-                self.assert_findings(result, f"{path.relative_to(self.root).as_posix()}: managed path is a symlink")
+                self.assert_findings(
+                    result,
+                    f"{path.relative_to(self.root).as_posix()}: managed path is a symlink",
+                )
                 self.assertNotIn("UTF-8", result.stderr)
                 self.assertEqual(sentinel.read_bytes(), b"\xff")
                 path.unlink()
@@ -714,26 +1012,41 @@ class ProjectRulesTest(unittest.TestCase):
         second.unlink()
         second.symlink_to(self.root / "docs/a.md")
         (self.root / "docs" / "c.md").mkdir()
-        self.assert_findings(self.run_validate("--rules-file", "docs/b.md"), "docs/b.md: managed path is a symlink")
-        self.assert_findings(self.run_validate("--rules-file", "docs/c.md"), "rules file 'docs/c.md': not a regular file")
+        self.assert_findings(
+            self.run_validate("--rules-file", "docs/b.md"),
+            "docs/b.md: managed path is a symlink",
+        )
+        self.assert_findings(
+            self.run_validate("--rules-file", "docs/c.md"),
+            "rules file 'docs/c.md': not a regular file",
+        )
 
     def test_unreadable_documents_report_read_findings(self):
         validate = load_script_module(SCRIPT, "project_rules").validate
         self.populate()
         for blocked in (self.index, self.rules):
             with self.subTest(blocked=blocked):
+
                 def refuse(path):
                     if path == blocked:
                         raise PermissionError("fixture denies content read")
 
                 with observe_paths(OPEN_CALLS, (), refuse, None):
                     findings = validate(self.root)
-                self.assertEqual(findings, [f"{blocked.relative_to(self.root).as_posix()}: cannot read file: fixture denies content read"])
+                self.assertEqual(
+                    findings,
+                    [
+                        f"{blocked.relative_to(self.root).as_posix()}: cannot read file: fixture denies content read"
+                    ],
+                )
 
     def test_findings_follow_document_order_then_source_line(self):
         self.populate()
         self.block(self.link, "[bad](first.md)", "[bad](second.md)")
-        self.rules.write_text("# Rules\n## Checks\n[bad](one)\n# Another\n[bad](two)\n``` \n", encoding="utf-8")
+        self.rules.write_text(
+            "# Rules\n## Checks\n[bad](one)\n# Another\n[bad](two)\n``` \n",
+            encoding="utf-8",
+        )
         result = self.run_validate()
         self.assert_lines(
             result,
@@ -763,7 +1076,10 @@ class ProjectRulesTest(unittest.TestCase):
         alias = self.root / "escape"
         alias.symlink_to(self.external, target_is_directory=True)
         with observe_paths(OPEN_CALLS, (), guard, None):
-            self.assertIn("rules file 'escape/x.md': symlink path escapes project root", module.validate(self.root, "escape/x.md"))
+            self.assertIn(
+                "rules file 'escape/x.md': symlink path escapes project root",
+                module.validate(self.root, "escape/x.md"),
+            )
         self.assertEqual(actual, [])
         for path in (self.index, self.rules):
             with self.subTest(path=path.name):
@@ -773,7 +1089,10 @@ class ProjectRulesTest(unittest.TestCase):
                 with observe_paths(OPEN_CALLS, (), guard, None):
                     findings = module.validate(self.root)
                 self.assertEqual(actual, [])
-                self.assertIn(f"{path.relative_to(self.root).as_posix()}: managed path is a symlink", findings)
+                self.assertIn(
+                    f"{path.relative_to(self.root).as_posix()}: managed path is a symlink",
+                    findings,
+                )
                 path.unlink()
                 path.write_bytes(original)
 
@@ -828,7 +1147,10 @@ class ProjectRulesTest(unittest.TestCase):
         self.assertEqual(unclosed(["```\n", "code\n", "```\n", "~~~\n", "code\n"]), 4)
         self.assertEqual(unclosed(["~~~\n", "```\n"]), 1)
         self.assertEqual(unclosed(["````\n", "```\n"]), 1)
-        self.assertEqual(list(module["unfenced_lines"](["~~~\n", "x\n", "~~~\n", "y\n"])), [(4, "y\n")])
+        self.assertEqual(
+            list(module["unfenced_lines"](["~~~\n", "x\n", "~~~\n", "y\n"])),
+            [(4, "y\n")],
+        )
 
     def test_relocated_runpy_load_is_inert_and_does_not_change_import_path(self):
         relocated = self.sandbox / "relocated"
@@ -841,9 +1163,16 @@ class ProjectRulesTest(unittest.TestCase):
             namespace = runpy.run_path(str(relocated / SCRIPT.name))
         self.assertEqual(sys.path, original_path)
         self.assertEqual((output.getvalue(), errors.getvalue()), ("", ""))
-        self.assertEqual(sorted(os.listdir(relocated)), ["markdown_fences.py", "rules.py"])
+        self.assertEqual(
+            sorted(os.listdir(relocated)), ["markdown_fences.py", "rules.py"]
+        )
         self.assertEqual(namespace["_unclosed_fence"](["```\n"]), 1)
-        self.assertEqual(namespace["validate"](self.root, ""), ["rules file '': expected a repository-relative file path without a leading '-' or '#'"])
+        self.assertEqual(
+            namespace["validate"](self.root, ""),
+            [
+                "rules file '': expected a repository-relative file path without a leading '-' or '#'"
+            ],
+        )
 
     def test_relocated_import_and_usage_error_leave_package_unchanged(self):
         relocated = self.sandbox / "relocated"
@@ -852,7 +1181,12 @@ class ProjectRulesTest(unittest.TestCase):
             shutil.copyfile(source, relocated / source.name)
 
         def snapshot():
-            return {path.relative_to(relocated): path.read_bytes() if path.is_file() else None for path in relocated.rglob("*")}
+            return {
+                path.relative_to(relocated): path.read_bytes()
+                if path.is_file()
+                else None
+                for path in relocated.rglob("*")
+            }
 
         original = snapshot()
         script = str(relocated / SCRIPT.name)
@@ -863,8 +1197,13 @@ class ProjectRulesTest(unittest.TestCase):
         ):
             with self.subTest(args=args):
                 result = subprocess.run(
-                    [sys.executable, "-E", *args], cwd=self.sandbox, stdin=subprocess.DEVNULL,
-                    capture_output=True, text=True, timeout=20, check=False,
+                    [sys.executable, "-E", *args],
+                    cwd=self.sandbox,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                    check=False,
                 )
                 self.assertEqual(result.returncode, status, result.stderr)
                 self.assertEqual(snapshot(), original)
@@ -894,7 +1233,10 @@ class ProjectRulesTest(unittest.TestCase):
         def junction(path):
             probes.append(path)
             if path == docs:
-                return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+                return SimpleNamespace(
+                    st_mode=stat.S_IFDIR,
+                    st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT,
+                )
             return lstat(path)
 
         with patch.object(Path, "lstat", junction):
@@ -908,7 +1250,10 @@ class ProjectRulesTest(unittest.TestCase):
         real_slots = module._slots
         external_file = self.external / "project-rules.md"
         external_file.write_bytes(b"\xff")
-        for managed, target in ((self.rules, external_file), (self.root / "docs", self.external)):
+        for managed, target in (
+            (self.rules, external_file),
+            (self.root / "docs", self.external),
+        ):
             with self.subTest(managed=managed):
                 backup = managed.with_name(f"{managed.name}.backup")
 
@@ -925,7 +1270,13 @@ class ProjectRulesTest(unittest.TestCase):
                 managed.unlink()
                 backup.rename(managed)
                 self.assertEqual(opened, [self.index])
-                self.assertTrue(any("managed path changed after preflight" in finding for finding in findings), findings)
+                self.assertTrue(
+                    any(
+                        "managed path changed after preflight" in finding
+                        for finding in findings
+                    ),
+                    findings,
+                )
 
     def test_managed_read_checks_opened_identity_before_decoding(self):
         validate = load_script_module(SCRIPT, "project_rules").validate
@@ -942,7 +1293,249 @@ class ProjectRulesTest(unittest.TestCase):
 
         with patch.object(os, "open", replace_at_open):
             findings = validate(self.root)
-        self.assertEqual(findings, [f"{RULES}: cannot read file: managed path changed after preflight"])
+        self.assertEqual(
+            findings,
+            [f"{RULES}: cannot read file: managed path changed after preflight"],
+        )
+
+    def write_checks(self, *commands):
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n```sh\n" + "\n".join(commands) + "\n```\n",
+            encoding="utf-8",
+        )
+
+    def test_checks_fences_report_each_offending_command(self):
+        self.populate()
+        for command, expected in (
+            ("/Users/alice/app/vendor/bin/phpunit", (HOST_PATH,)),
+            ("cd /home/bob/app && pytest", (HOST_PATH,)),
+            ("docker exec -it app php bin/console", (DOCKER_TTY,)),
+            ("docker exec -ti app php bin/console", (DOCKER_TTY,)),
+            ("docker exec -u root -it app pytest", (DOCKER_TTY,)),
+            ("docker exec -itu www-data app pytest", (DOCKER_TTY,)),
+            ("docker exec -i -t app sh", (DOCKER_TTY,)),
+            ("docker container exec -it app sh", (DOCKER_TTY,)),
+            ("docker compose exec php vendor/bin/phpunit", (COMPOSE_TTY,)),
+            ("docker compose -f compose.ci.yml exec php pytest", (COMPOSE_TTY,)),
+            ("docker compose -f docker-compose.yml exec php test", (COMPOSE_TTY,)),
+            (
+                "docker compose -f docker-compose.override.yml exec php test",
+                (COMPOSE_TTY,),
+            ),
+            ("docker compose -p my-app exec php test", (COMPOSE_TTY,)),
+            ("docker-compose exec php test", (COMPOSE_TTY,)),
+            (
+                "docker compose exec -T php test && docker compose exec node test",
+                (COMPOSE_TTY,),
+            ),
+            (
+                "docker exec -it app sh -c 'cd /Users/alice/app && make'",
+                (HOST_PATH, DOCKER_TTY),
+            ),
+            ("x=${A#b} docker exec -it app sh", (DOCKER_TTY,)),
+            ("echo a#b; docker exec -it app sh", (DOCKER_TTY,)),
+            ("curl http://h/#x && docker exec -it app sh", (DOCKER_TTY,)),
+            ('echo "# x"; docker exec -it app sh', (DOCKER_TTY,)),
+            ('echo "#"; docker exec -it app sh', (DOCKER_TTY,)),
+            ("echo \\#; docker exec -it app sh", (DOCKER_TTY,)),
+            ("sh -c 'docker exec -it app sh'", (DOCKER_TTY,)),
+            ('bash -lc "docker compose exec app x"', (COMPOSE_TTY,)),
+            ('bash -eo pipefail -c "docker exec -it app sh"', (DOCKER_TTY,)),
+            ('bash -o pipefail -c "docker exec -it app sh"', (DOCKER_TTY,)),
+            ('bash +O extglob -c "docker exec -it app sh"', (DOCKER_TTY,)),
+            ('bash --rcfile x -c "docker exec -it app sh"', (DOCKER_TTY,)),
+        ):
+            with self.subTest(command=command):
+                self.write_checks(command)
+                self.assert_lines(
+                    self.run_validate(),
+                    *(f"{RULES}: line 6: {finding}" for finding in expected),
+                )
+
+    def test_checks_findings_name_the_first_line_of_a_continued_command(self):
+        self.populate()
+        self.write_checks("make lint", "docker exec \\", "  -it app sh")
+        self.assert_lines(self.run_validate(), f"{RULES}: line 7: {DOCKER_TTY}")
+
+    def test_checks_scan_three_nested_shells_and_no_deeper(self):
+        self.populate()
+        self.write_checks(
+            'sh -c "sh -c \'sh -c \\"docker exec -it app sh\\"\'"',
+            'sh -c "sh -c \'sh -c \\"sh -c \\\\\\"docker exec -it app sh\\\\\\"\\"\'"',
+        )
+        self.assert_lines(self.run_validate(), f"{RULES}: line 6: {DOCKER_TTY}")
+
+    def test_checks_continuation_ignores_commented_and_escaped_backslashes(self):
+        self.populate()
+        self.write_checks(
+            "make test # run tests \\",
+            "docker exec -it app pytest",
+            "echo a\\\\",
+            "docker exec -ti app pytest",
+        )
+        self.assert_lines(
+            self.run_validate(),
+            f"{RULES}: line 7: {DOCKER_TTY}",
+            f"{RULES}: line 9: {DOCKER_TTY}",
+        )
+
+    def test_checks_subsections_stay_in_scope(self):
+        self.populate()
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n### Container\n\n```sh\ndocker exec -it app pytest\n```\n",
+            encoding="utf-8",
+        )
+        self.assert_lines(self.run_validate(), f"{RULES}: line 8: {DOCKER_TTY}")
+
+    def test_checks_fences_scan_heading_like_lines_as_commands(self):
+        self.populate()
+        self.write_checks("# run tests", "## x", "docker exec -it app pytest")
+        self.assert_lines(self.run_validate(), f"{RULES}: line 8: {DOCKER_TTY}")
+
+    def test_checks_scope_ends_at_an_unfenced_h1(self):
+        self.populate()
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n# Other\n\n```sh\ndocker exec -it app pytest\n```\n",
+            encoding="utf-8",
+        )
+        self.assert_lines(
+            self.run_validate(),
+            f"{RULES}: line 5: expected exactly one H1 (found another H1)",
+        )
+
+    def test_checks_fences_accept_non_interactive_commands(self):
+        self.populate()
+        self.rules.write_text(
+            "# Project rules\n\n## Checks\n\n"
+            "Never run docker exec -it or paths like /Users/alice/x/ here.\n"
+            "docker compose exec php test\n\n"
+            "```sh\ndocker exec app php bin/console\n"
+            "docker exec -T app php bin/console\n"
+            "docker compose exec -T php vendor/bin/phpunit\n"
+            "docker compose -f compose.ci.yml exec -T php pytest\n"
+            "docker compose -f docker-compose.yml exec -T php test\n"
+            "docker compose exec --no-TTY php test\n"
+            "docker compose exec -Tu www-data php test\n"
+            "docker compose exec -T php test # not -it\n"
+            "sh -c 'docker compose exec -T php test'\n"
+            "# docker exec -it app sh\n"
+            "docker compose exec \\\n"
+            "  -T php test\n"
+            "```\n\n## Ownership\n\n```sh\ndocker exec -it app echo ok\n/Users/alice/example/\n```\n",
+            encoding="utf-8",
+        )
+        self.assert_valid(self.run_validate())
+
+    def test_validate_inspects_the_root_style_gate(self):
+        self.populate()
+        config = self.root / ".style-gate.json"
+        write_style_gate(config, VALID_STYLE_GATE)
+        self.assert_valid(self.run_validate())
+        config.write_text("{broken", encoding="utf-8")
+        self.assert_lines(
+            self.run_validate(),
+            f".style-gate.json: invalid JSON: {json_error('{broken')}",
+        )
+
+    def test_validate_prefers_the_draft_style_gate_over_the_root_one(self):
+        self.populate()
+        (self.root / ".style-gate.json").write_text("{broken", encoding="utf-8")
+        drafts = self.sandbox / "drafts"
+        drafts.mkdir()
+        self.draft_index(drafts, self.link)
+        (drafts / self.rules.name).write_text(RULES_TEXT, encoding="utf-8")
+        self.assert_lines(
+            self.run_validate("--draft-dir", drafts),
+            f".style-gate.json: invalid JSON: {json_error('{broken')}",
+        )
+        write_style_gate(
+            drafts / ".style-gate.json",
+            {"eslint": {"check": ["npx", "eslint", "{relpath}"]}},
+        )
+        self.assert_valid(self.run_validate("--draft-dir", drafts))
+
+    def test_style_gate_null_templates_count_as_absent(self):
+        self.populate()
+        write_style_gate(
+            self.root / ".style-gate.json",
+            {"eslint": {"write": None, "check": ["npx", "eslint", "{relpath}"]}},
+        )
+        self.assert_valid(self.run_validate())
+
+    def test_validate_rejects_invalid_style_gate_payloads(self):
+        self.populate()
+        config = self.root / ".style-gate.json"
+        for payload, expected in (
+            (b"\xff", "invalid UTF-8"),
+            (b"{broken", f"invalid JSON: {json_error('{broken')}"),
+            (json.dumps({"tools": []}).encode("utf-8"), 'missing "tools" object'),
+            (
+                json.dumps({"tools": {"eslint": "cmd"}}).encode("utf-8"),
+                "tools.eslint must be an object",
+            ),
+            (
+                json.dumps({"tools": {"eslint": {"write": "cmd"}}}).encode("utf-8"),
+                "tools.eslint.write must be a list of strings",
+            ),
+            (
+                json.dumps({"tools": {"eslint": {"check": ["eslint", 1]}}}).encode(
+                    "utf-8"
+                ),
+                "tools.eslint.check must be a list of strings",
+            ),
+            (
+                json.dumps(
+                    {
+                        "tools": {
+                            "eslint": {
+                                "write": ["/Users/alice/bin/eslint", "{relpath}"]
+                            }
+                        }
+                    }
+                ).encode("utf-8"),
+                "tools.eslint.write must not contain host user paths",
+            ),
+            (
+                json.dumps(
+                    {
+                        "tools": {
+                            "eslint": {
+                                "check": [
+                                    "sh",
+                                    "-c",
+                                    "cd /home/bob/app && eslint {relpath}",
+                                ]
+                            }
+                        }
+                    }
+                ).encode("utf-8"),
+                "tools.eslint.check must not contain host user paths",
+            ),
+        ):
+            with self.subTest(payload=payload):
+                config.write_bytes(payload)
+                self.assert_lines(self.run_validate(), f".style-gate.json: {expected}")
+
+    def test_validate_rejects_a_nonregular_style_gate(self):
+        self.populate()
+        config = self.root / ".style-gate.json"
+        config.symlink_to(self.external / "missing.json")
+        self.assert_lines(self.run_validate(), ".style-gate.json: not a regular file")
+        config.unlink()
+        config.mkdir()
+        self.assert_lines(self.run_validate(), ".style-gate.json: not a regular file")
+
+
+def write_style_gate(path, tools):
+    path.write_text(json.dumps({"tools": tools}), encoding="utf-8")
+
+
+def json_error(text):
+    try:
+        json.loads(text)
+    except ValueError as error:
+        return str(error)
+    raise AssertionError(f"{text!r} is valid JSON")
 
 
 def git_environment(home):
@@ -959,7 +1552,14 @@ class PrepareTest(unittest.TestCase):
         self.home = self.sandbox / "home"
         self.home.mkdir()
         self.env = git_environment(self.home)
-        version = subprocess.run(["git", "--version"], env=self.env, capture_output=True, text=True, timeout=20, check=False)
+        version = subprocess.run(
+            ["git", "--version"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
         match = re.match(r"git version (\d+)\.(\d+)", version.stdout)
         if version.returncode or not match or (int(match[1]), int(match[2])) < (2, 31):
             self.skipTest("git 2.31 or newer required")
@@ -968,12 +1568,21 @@ class PrepareTest(unittest.TestCase):
         self.index = self.root / "AGENTS.md"
         self.rules = self.root / RULES
         self.rules.parent.mkdir()
-        self.index.write_text(f"# Index\n{BEGIN}\n[Rules]({RULES})\n{END}\n", encoding="utf-8")
+        self.index.write_text(
+            f"# Index\n{BEGIN}\n[Rules]({RULES})\n{END}\n", encoding="utf-8"
+        )
         self.rules.write_text(RULES_TEXT, encoding="utf-8")
 
     def git(self, *argv, cwd):
-        return subprocess.run(["git", *argv], cwd=str(cwd), env=self.env, capture_output=True, text=True,
-                              timeout=60, check=False)
+        return subprocess.run(
+            ["git", *argv],
+            cwd=str(cwd),
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
 
     def init(self, directory):
         result = self.git("init", "-q", str(directory), cwd=self.sandbox)
@@ -982,33 +1591,72 @@ class PrepareTest(unittest.TestCase):
 
     def run_prepare(self, start, *options, env=None):
         return subprocess.run(
-            [sys.executable, str(SCRIPT), "prepare", str(start), *map(str, options)], cwd=self.sandbox,
-            env=env or self.env, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
-            timeout=60, check=False,
+            [sys.executable, str(SCRIPT), "prepare", str(start), *map(str, options)],
+            cwd=self.sandbox,
+            env=env or self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
         )
 
     def assert_report(self, result, **expected):
         self.assertEqual((result.returncode, result.stderr), (0, ""), result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(list(report), sorted(report))
-        self.assertEqual(set(report), {"root", "rules_file", "git_dir", "common_dir", "claude_md"})
+        self.assertEqual(
+            set(report),
+            {
+                "root",
+                "rules_file",
+                "git_dir",
+                "common_dir",
+                "claude_md",
+                "rule_sources",
+                "style_gate",
+            },
+        )
+        self.assertIsInstance(report["rule_sources"], list)
+        self.assertEqual(report["rule_sources"], sorted(report["rule_sources"]))
         self.assertEqual(result.stdout.count("\n"), 1)
         for key, value in expected.items():
-            self.assertEqual(report[key], str(value), key)
+            wanted = value if isinstance(value, list) else str(value)
+            self.assertEqual(report[key], wanted, key)
         return report
 
     def snapshot(self):
-        return {path.relative_to(self.root): (path.is_dir(), path.stat().st_mtime_ns) for path in self.root.rglob("*")}
+        return {
+            path.relative_to(self.root): (path.is_dir(), path.lstat().st_mtime_ns)
+            for path in self.root.rglob("*")
+        }
 
     def test_nested_start_resolves_the_root_and_writes_nothing(self):
         self.init(self.root)
         self.git("add", ".", cwd=self.root)
         before = self.snapshot()
-        scripts_before = {path.relative_to(SCRIPT.parent): path.stat().st_mtime_ns for path in SCRIPT.parent.rglob("*")}
+        scripts_before = {
+            path.relative_to(SCRIPT.parent): path.stat().st_mtime_ns
+            for path in SCRIPT.parent.rglob("*")
+        }
         result = self.run_prepare(self.root / "docs")
-        self.assert_report(result, root=self.root, rules_file=RULES, git_dir=self.root / ".git", common_dir=self.root / ".git", claude_md="absent")
+        self.assert_report(
+            result,
+            root=self.root,
+            rules_file=RULES,
+            git_dir=self.root / ".git",
+            common_dir=self.root / ".git",
+            claude_md="absent",
+        )
         self.assertEqual(self.snapshot(), before)
-        self.assertEqual({path.relative_to(SCRIPT.parent): path.stat().st_mtime_ns for path in SCRIPT.parent.rglob("*")}, scripts_before)
+        self.assertEqual(
+            {
+                path.relative_to(SCRIPT.parent): path.stat().st_mtime_ns
+                for path in SCRIPT.parent.rglob("*")
+            },
+            scripts_before,
+        )
 
     def test_inherited_git_variables_stop_before_any_git_call(self):
         module = load_script_module(SCRIPT, "project_rules_prepare")
@@ -1016,28 +1664,77 @@ class PrepareTest(unittest.TestCase):
         def refuse(*args, **kwargs):
             self.fail("git called despite inherited variables")
 
-        for variables in ({"GIT_DIR": "x"}, {"GIT_CONFIG": ""}, {"GIT_DIR": "x", "GIT_WORK_TREE": "y", "GIT_CONFIG_COUNT": "1"}):
-            with self.subTest(variables=variables), patch.dict(os.environ, variables, clear=False):
+        for variables in (
+            {"GIT_DIR": "x"},
+            {"GIT_CONFIG": ""},
+            {"GIT_DIR": "x", "GIT_WORK_TREE": "y", "GIT_CONFIG_COUNT": "1"},
+        ):
+            with (
+                self.subTest(variables=variables),
+                patch.dict(os.environ, {**self.env, **variables}, clear=True),
+            ):
                 with patch.object(module, "_git", refuse):
-                    self.assertEqual(module.prepare(self.root), (None, [f"inherited {','.join(sorted(variables))}; unset them and retry"]))
+                    self.assertEqual(
+                        module.prepare(self.root),
+                        (
+                            None,
+                            [
+                                f"inherited {','.join(sorted(variables))}; unset them and retry"
+                            ],
+                        ),
+                    )
 
         def reach_git(*args, **kwargs):
             raise RuntimeError("git reached")
 
-        with patch.dict(os.environ, {"GIT_PAGER": "cat", "GIT_TERMINAL_PROMPT": "0"}), patch.object(module, "_git", reach_git):
+        with (
+            patch.dict(
+                os.environ,
+                {**self.env, "GIT_PAGER": "cat", "GIT_TERMINAL_PROMPT": "0"},
+                clear=True,
+            ),
+            patch.object(module, "_git", reach_git),
+        ):
             with self.assertRaisesRegex(RuntimeError, "git reached"):
                 module.prepare(self.root)
 
     def test_child_environment_is_allowlisted(self):
         module = load_script_module(SCRIPT, "project_rules_env")
-        with patch.dict(os.environ, {"GIT_DIR": "x", "GIT_PAGER": "less", "LC_ALL": "ru_RU.UTF-8", "PATH": "/bin"}):
-            self.assertEqual(module._child_env(), {"LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-                                                   "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.excludesFile",
-                                                   "GIT_CONFIG_VALUE_0": os.devnull, "PATH": "/bin", "HOME": os.environ["HOME"]})
+        with patch.dict(
+            os.environ,
+            {
+                "GIT_DIR": "x",
+                "GIT_PAGER": "less",
+                "LC_ALL": "ru_RU.UTF-8",
+                "PATH": "/bin",
+            },
+        ):
+            self.assertEqual(
+                module._child_env(),
+                {
+                    "LC_ALL": "C",
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_CONFIG_GLOBAL": os.devnull,
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "core.excludesFile",
+                    "GIT_CONFIG_VALUE_0": os.devnull,
+                    "PATH": "/bin",
+                    "HOME": os.environ["HOME"],
+                },
+            )
         with patch.dict(os.environ, {"PATH": "/bin"}, clear=True):
-            self.assertEqual(module._child_env(), {"LC_ALL": "C", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-                                                   "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.excludesFile",
-                                                   "GIT_CONFIG_VALUE_0": os.devnull, "PATH": "/bin"})
+            self.assertEqual(
+                module._child_env(),
+                {
+                    "LC_ALL": "C",
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_CONFIG_GLOBAL": os.devnull,
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "core.excludesFile",
+                    "GIT_CONFIG_VALUE_0": os.devnull,
+                    "PATH": "/bin",
+                },
+            )
 
     def test_non_repository_and_bare_repository_are_findings(self):
         result = self.run_prepare(self.root)
@@ -1056,31 +1753,54 @@ class PrepareTest(unittest.TestCase):
     def test_version_gate_rejects_old_git(self):
         shim = self.sandbox / "shim"
         shim.mkdir()
-        (shim / "git").write_text(f"#!{sys.executable}\nimport sys\nprint('git version 2.30.5')\n")
+        (shim / "git").write_text(
+            f"#!{sys.executable}\nimport sys\nprint('git version 2.30.5')\n"
+        )
         (shim / "git").chmod(0o755)
         self.init(self.root)
         env = dict(self.env, PATH=f"{shim}{os.pathsep}{self.env['PATH']}")
         result = self.run_prepare(self.root, env=env)
         self.assertEqual((result.returncode, result.stdout), (1, ""))
-        self.assertEqual(result.stderr, "project-rules: git 2.31 or newer is required; found 2.30.5\n")
+        self.assertEqual(
+            result.stderr,
+            "project-rules: git 2.31 or newer is required; found 2.30.5\n",
+        )
 
     def test_missing_git_executable_is_a_finding(self):
         env = dict(self.env, PATH=str(self.sandbox / "empty"))
         result = self.run_prepare(self.root, env=env)
-        self.assertEqual(result.stderr, "project-rules: git executable not found on PATH\n")
+        self.assertEqual(
+            result.stderr, "project-rules: git executable not found on PATH\n"
+        )
 
     def test_linked_worktree_reports_the_worktree_and_the_main_metadata(self):
         main = self.init(self.sandbox / "main")
         self.git("add", ".", cwd=main)
-        self.git("-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-qm", "init", cwd=main)
+        self.git(
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.test",
+            "commit",
+            "-qm",
+            "init",
+            cwd=main,
+        )
         linked = self.sandbox / "linked"
         result = self.git("worktree", "add", "-q", str(linked), cwd=main)
         self.assertEqual(result.returncode, 0, result.stderr)
         shutil.copyfile(self.index, linked / "AGENTS.md")
         (linked / "docs").mkdir()
         shutil.copyfile(self.rules, linked / RULES)
-        report = self.assert_report(result=self.run_prepare(linked), root=linked, rules_file=RULES, claude_md="absent")
-        self.assertEqual(Path(report["git_dir"]), main / ".git" / "worktrees" / "linked")
+        report = self.assert_report(
+            result=self.run_prepare(linked),
+            root=linked,
+            rules_file=RULES,
+            claude_md="absent",
+        )
+        self.assertEqual(
+            Path(report["git_dir"]), main / ".git" / "worktrees" / "linked"
+        )
         self.assertEqual(Path(report["common_dir"]), main / ".git")
 
     def test_ignored_rules_file_is_reported_and_the_index_is_not(self):
@@ -1088,41 +1808,76 @@ class PrepareTest(unittest.TestCase):
         (self.root / ".gitignore").write_text("docs/\n", encoding="utf-8")
         result = self.run_prepare(self.root)
         self.assertEqual((result.returncode, result.stdout), (1, ""))
-        self.assertEqual(result.stderr, f"project-rules: {RULES} is ignored by .gitignore:1 (docs/)\n")
+        self.assertEqual(
+            result.stderr,
+            f"project-rules: {RULES} is ignored by .gitignore:1 (docs/)\n",
+        )
         (self.root / ".gitignore").write_text("AGENTS.md\n", encoding="utf-8")
         result = self.run_prepare(self.root)
-        self.assertEqual(result.stderr, "project-rules: AGENTS.md is ignored by .gitignore:1 (AGENTS.md)\n")
-        (self.root / ".gitignore").write_text("*.md\n!docs/project-rules.md\n", encoding="utf-8")
+        self.assertEqual(
+            result.stderr,
+            "project-rules: AGENTS.md is ignored by .gitignore:1 (AGENTS.md)\n",
+        )
+        (self.root / ".gitignore").write_text(
+            "*.md\n!docs/project-rules.md\n", encoding="utf-8"
+        )
         result = self.run_prepare(self.root)
-        self.assertEqual(result.stderr, "project-rules: AGENTS.md is ignored by .gitignore:1 (*.md)\n")
-        (self.root / ".gitignore").write_text("docs/*\n!docs/project-rules.md\n", encoding="utf-8")
+        self.assertEqual(
+            result.stderr,
+            "project-rules: AGENTS.md is ignored by .gitignore:1 (*.md)\n",
+        )
+        (self.root / ".gitignore").write_text(
+            "docs/*\n!docs/project-rules.md\n", encoding="utf-8"
+        )
         self.assert_report(self.run_prepare(self.root), claude_md="absent")
 
     def test_global_excludes_file_is_not_consulted(self):
         self.init(self.root)
         (self.home / ".config" / "git").mkdir(parents=True)
-        (self.home / ".config" / "git" / "ignore").write_text("AGENTS.md\n", encoding="utf-8")
+        (self.home / ".config" / "git" / "ignore").write_text(
+            "AGENTS.md\n", encoding="utf-8"
+        )
         self.assert_report(self.run_prepare(self.root), claude_md="absent")
         (self.root / ".gitignore").write_text("AGENTS.md\n", encoding="utf-8")
         result = self.run_prepare(self.root)
-        self.assertEqual(result.stderr, "project-rules: AGENTS.md is ignored by .gitignore:1 (AGENTS.md)\n")
+        self.assertEqual(
+            result.stderr,
+            "project-rules: AGENTS.md is ignored by .gitignore:1 (AGENTS.md)\n",
+        )
 
     def test_rules_file_inside_git_metadata_is_rejected(self):
         self.init(self.root)
         result = self.run_prepare(self.root, "--rules-file", ".git/config")
-        self.assertEqual(result.stderr, "project-rules: rules file '.git/config': .git is reserved\n")
+        self.assertEqual(
+            result.stderr, "project-rules: rules file '.git/config': .git is reserved\n"
+        )
         result = self.run_prepare(self.root, "--rules-file", "docs/../.GIT/config")
-        self.assertEqual(result.stderr, "project-rules: rules file 'docs/../.GIT/config': .git is reserved\n")
+        self.assertEqual(
+            result.stderr,
+            "project-rules: rules file 'docs/../.GIT/config': .git is reserved\n",
+        )
         metadata = self.root / "meta"
-        result = self.git("init", "-q", "--separate-git-dir", str(metadata), str(self.root), cwd=self.sandbox)
+        result = self.git(
+            "init",
+            "-q",
+            "--separate-git-dir",
+            str(metadata),
+            str(self.root),
+            cwd=self.sandbox,
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         (metadata / "rules.md").write_text(RULES_TEXT, encoding="utf-8")
         (self.root / "link").symlink_to(metadata, target_is_directory=True)
         for rules_file in ("meta/rules.md", "link/rules.md"):
             with self.subTest(rules_file=rules_file):
-                result = self.run_prepare(self.root / "docs", "--rules-file", rules_file)
+                result = self.run_prepare(
+                    self.root / "docs", "--rules-file", rules_file
+                )
                 self.assertEqual((result.returncode, result.stdout), (1, ""))
-                self.assertEqual(result.stderr, "project-rules: rules file lies inside Git metadata\n")
+                self.assertEqual(
+                    result.stderr,
+                    "project-rules: rules file lies inside Git metadata\n",
+                )
 
     def test_misspelled_rules_file_component_on_case_folding_storage(self):
         self.init(self.root)
@@ -1135,9 +1890,15 @@ class PrepareTest(unittest.TestCase):
         finally:
             probe.unlink()
         result = self.run_prepare(self.root, "--rules-file", "Docs/project-rules.md")
-        self.assertEqual(result.stderr, "project-rules: rules file 'Docs/project-rules.md': component 'Docs' differs in case from existing 'docs'\n")
+        self.assertEqual(
+            result.stderr,
+            "project-rules: rules file 'Docs/project-rules.md': component 'Docs' differs in case from existing 'docs'\n",
+        )
         result = self.run_prepare(self.root, "--rules-file", "docs/Project-Rules.md")
-        self.assertIn("component 'Project-Rules.md' differs in case from existing 'project-rules.md'", result.stderr)
+        self.assertIn(
+            "component 'Project-Rules.md' differs in case from existing 'project-rules.md'",
+            result.stderr,
+        )
 
     def test_claude_md_states(self):
         self.init(self.root)
@@ -1162,7 +1923,175 @@ class PrepareTest(unittest.TestCase):
         self.rules.unlink()
         self.rules.symlink_to(self.index)
         result = self.run_prepare(self.root)
-        self.assertEqual(result.stderr, f"project-rules: {RULES}: managed path is a symlink\n")
+        self.assertEqual(
+            result.stderr, f"project-rules: {RULES}: managed path is a symlink\n"
+        )
         result = self.run_prepare(self.root, "--rules-file", "AGENTS.md")
-        self.assertEqual(result.stderr, "project-rules: rules file 'AGENTS.md': file/directory collision with AGENTS.md\n")
+        self.assertEqual(
+            result.stderr,
+            "project-rules: rules file 'AGENTS.md': file/directory collision with AGENTS.md\n",
+        )
 
+    def prepare_unchanged(self, start, *options, env=None):
+        before = self.snapshot()
+        result = self.run_prepare(start, *options, env=env)
+        self.assertEqual(self.snapshot(), before)
+        return result
+
+    def write_files(self, *paths, base=None):
+        for rel in paths:
+            target = (base or self.root) / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("# rule\n", encoding="utf-8")
+
+    def test_rule_sources_collects_supported_files_and_skips_excluded_paths(self):
+        self.init(self.root)
+        self.write_files(
+            "docs/rules/a.md",
+            "docs/rules/b.md",
+            "docs/rules/ignore.txt",
+            "docs/rules/nested/c.md",
+            ".cursor/rules/one.mdc",
+            ".cursor/rules/two",
+            ".cursor/rules/sub/three.mdc",
+            ".github/copilot-instructions.md",
+            ".windsurfrules",
+            "packages/app/AGENTS.md",
+            "packages/app/CLAUDE.md",
+            "node_modules/pkg/AGENTS.md",
+            "vendor/pkg/CLAUDE.md",
+            "CLAUDE.md",
+        )
+        (self.root / "docs" / "rules" / "link.md").symlink_to(
+            self.root / "docs" / "rules" / "a.md"
+        )
+        (self.root / "packages" / "symlink-dir").symlink_to(
+            self.root / "packages" / "app", target_is_directory=True
+        )
+        (self.root / "packages" / "other").mkdir()
+        (self.root / "packages" / "other" / "AGENTS.md").symlink_to(
+            Path("..") / "app" / "AGENTS.md"
+        )
+        (self.root / ".git" / "AGENTS.md").write_text("# ignored\n", encoding="utf-8")
+
+        self.assert_report(
+            self.prepare_unchanged(self.root),
+            rule_sources=[
+                ".cursor/rules/one.mdc",
+                ".cursor/rules/two",
+                ".github/copilot-instructions.md",
+                ".windsurfrules",
+                "docs/rules/a.md",
+                "docs/rules/b.md",
+                "packages/app/AGENTS.md",
+                "packages/app/CLAUDE.md",
+            ],
+            style_gate="absent",
+        )
+        self.assert_report(
+            self.prepare_unchanged(self.root, "--rules-file", "docs/rules/a.md"),
+            rule_sources=[
+                ".cursor/rules/one.mdc",
+                ".cursor/rules/two",
+                ".github/copilot-instructions.md",
+                ".windsurfrules",
+                "docs/rules/b.md",
+                "packages/app/AGENTS.md",
+                "packages/app/CLAUDE.md",
+            ],
+        )
+
+    def test_rule_sources_skip_symlinked_rule_directories(self):
+        self.init(self.root)
+        self.write_files("packages/app/AGENTS.md")
+        external = self.sandbox / "external"
+        self.write_files(
+            "cursor/x.mdc",
+            "github/copilot-instructions.md",
+            "docs/y.md",
+            base=external,
+        )
+        (self.root / ".cursor").mkdir()
+        (self.root / ".cursor" / "rules").symlink_to(
+            external / "cursor", target_is_directory=True
+        )
+        (self.root / ".github").symlink_to(
+            external / "github", target_is_directory=True
+        )
+        (self.root / "docs" / "rules").symlink_to(
+            external / "docs", target_is_directory=True
+        )
+        self.assert_report(
+            self.prepare_unchanged(self.root),
+            rule_sources=["packages/app/AGENTS.md"],
+        )
+
+    def test_rule_sources_skip_a_separate_git_dir_inside_the_worktree(self):
+        separate = self.root / "meta"
+        result = self.git(
+            "init",
+            "-q",
+            "--separate-git-dir",
+            str(separate),
+            str(self.root),
+            cwd=self.sandbox,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.write_files("packages/app/AGENTS.md")
+        (separate / "AGENTS.md").write_text("# meta\n", encoding="utf-8")
+        self.assert_report(
+            self.prepare_unchanged(self.root),
+            rule_sources=["packages/app/AGENTS.md"],
+        )
+
+    def test_rule_sources_skip_redirecting_reparse_directories(self):
+        self.init(self.root)
+        self.write_files("packages/app/AGENTS.md", "packages/reparse-dir/AGENTS.md")
+        reparse_dir = self.root / "packages" / "reparse-dir"
+        module = load_script_module(SCRIPT, "project_rules_reparse")
+        lstat = Path.lstat
+
+        def fake_lstat(path):
+            if path == reparse_dir:
+                return SimpleNamespace(
+                    st_mode=stat.S_IFDIR,
+                    st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT,
+                )
+            return lstat(path)
+
+        with (
+            patch.object(Path, "lstat", fake_lstat),
+            patch.dict(os.environ, self.env, clear=True),
+        ):
+            report, findings = module.prepare(self.root)
+        self.assertEqual(findings, [])
+        self.assertEqual(report["rule_sources"], ["packages/app/AGENTS.md"])
+
+    def test_prepare_reports_style_gate_states(self):
+        self.init(self.root)
+        self.assert_report(self.prepare_unchanged(self.root), style_gate="absent")
+
+        config = self.root / ".style-gate.json"
+        write_style_gate(config, VALID_STYLE_GATE)
+        self.assert_report(self.prepare_unchanged(self.root), style_gate="valid")
+
+        for payload in (
+            b"\xff",
+            b"{broken",
+            json.dumps({"other": {}}).encode("utf-8"),
+            json.dumps(
+                {"tools": {"eslint": {"write": ["/Users/alice/eslint", "{relpath}"]}}}
+            ).encode("utf-8"),
+            json.dumps(
+                {"tools": {"eslint": {"check": ["/home/bob/eslint", "{relpath}"]}}}
+            ).encode("utf-8"),
+        ):
+            with self.subTest(payload=payload):
+                config.write_bytes(payload)
+                self.assert_report(
+                    self.prepare_unchanged(self.root), style_gate="invalid"
+                )
+
+        config.unlink()
+        config.symlink_to(self.sandbox / "missing.json")
+        self.assert_report(self.prepare_unchanged(self.root), style_gate="invalid")

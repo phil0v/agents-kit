@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "agy-agents",
+  "version": "0.1.0",
+  "description": "Antigravity native subagent forms for the code-flow workflow roles."
+}

@@ -43,7 +43,6 @@ WHY_SECTION = re.compile(r"(?ms)^## Why\s*$(.*?)(?=^## |\Z)")
 SUMMARY_WIDTH = 80
 DESCRIPTION_WIDTH = 100
 DESCRIPTION_LIMIT = 180
-UNSET_PRIORITY = 4
 
 IN_PROGRESS, NOT_STARTED, READY_TO_ARCHIVE, DRAFT = range(4)
 GROUP_TITLES = {
@@ -79,7 +78,7 @@ def count_tasks(tasks_text):
 
 def parse_priority(metadata):
     match = PRIORITY.search(metadata)
-    return int(match.group(1)) if match else UNSET_PRIORITY
+    return int(match.group(1)) if match else None
 
 
 def describe(proposal):
@@ -189,7 +188,7 @@ def run_openspec_list(root):
 
 
 def check_metadata_errors(name, metadata, priority, created, errors):
-    if re.search(r"^x-priority:\s*", metadata, re.MULTILINE) and priority == UNSET_PRIORITY:
+    if re.search(r"^x-priority:\s*", metadata, re.MULTILINE) and priority is None:
         errors.append(f"{name}: .openspec.yaml has invalid x-priority")
     if re.search(r"^created:\s*", metadata, re.MULTILINE) and created is None:
         errors.append(f"{name}: .openspec.yaml has invalid created date")
@@ -256,12 +255,21 @@ def collect_changes(root):
         group = change_group(done, total, draft)
         description = describe(proposal)
         rows.append((group, priority, created or date.max, name, ratio, description))
-    rows.sort(key=lambda row: (row[0], row[1], row[2], row[3]))
+    rows.sort(
+        key=lambda row: (
+            row[0],
+            row[1] is not None,
+            row[1] if row[1] is not None else 0,
+            row[2],
+            row[3],
+        )
+    )
     return rows, errors
 
 
 def render(rows, errors, full, short):
-    print(f"{len(rows)} active change{'' if len(rows) == 1 else 's'}")
+    active_count = sum(1 for row in rows if row[0] != DRAFT)
+    print(f"{active_count} active change{'' if active_count == 1 else 's'}")
     for group, title in GROUP_TITLES.items():
         group_rows = [row for row in rows if row[0] == group]
         if not group_rows:
@@ -276,7 +284,7 @@ def render(rows, errors, full, short):
             progress_width = max(len(row[4]) for row in group_rows)
             for row in group_rows:
                 print()
-                priority_label = f"P{row[1]}" if row[1] < UNSET_PRIORITY else "--"
+                priority_label = f"P{row[1]}" if row[1] is not None else "--"
                 header = (
                     f"▸ {row[3]:<{name_width}}  {priority_label}  "
                     f"{row[4]:<{progress_width}}"
@@ -288,7 +296,7 @@ def render(rows, errors, full, short):
             name_width = max(len(row[3]) for row in rows)
             progress_width = max(len(row[4]) for row in rows)
             for row in group_rows:
-                priority_label = f"P{row[1]}" if row[1] < UNSET_PRIORITY else "--"
+                priority_label = f"P{row[1]}" if row[1] is not None else "--"
                 line = (
                     f"{row[3]:<{name_width}}  {priority_label}  "
                     f"{row[4]:<{progress_width}}  {clip(row[5], SUMMARY_WIDTH)}"

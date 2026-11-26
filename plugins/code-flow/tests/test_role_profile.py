@@ -33,6 +33,22 @@ def resolve_effort(harness, role, *extra):
     return resolve_profile(harness, role, *extra)['effort']
 
 
+def recording_env(directory, payload):
+    log_path = Path(directory) / 'metrics.jsonl'
+    recorder = Path(directory) / 'recorder.py'
+    recorder.write_text(
+        'import json\n'
+        'from pathlib import Path\n'
+        f'LOG = Path({str(log_path)!r})\n'
+        'def record(plugin, event, status, seconds, role=None, model=None):\n'
+        '    with LOG.open("a") as handle:\n'
+        f'        handle.write(json.dumps({payload}) + "\\n")\n'
+    )
+    env = dict(os.environ, AGENTS_METRICS_MODULE=str(recorder))
+    env.pop('AGENTS_METRICS', None)
+    return env, log_path
+
+
 class GateReportEffortTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -408,6 +424,37 @@ class ProviderTableTest(unittest.TestCase):
                 self.assert_json_error(self.resolve('pi', 'worker', *arguments))
 
 
+class HarnessListingTest(unittest.TestCase):
+    def test_list_harnesses_emits_every_accepted_id_without_a_role(self):
+        result = resolve('--list-harnesses')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        mapping = json.loads((ROOT / 'harnesses' / 'mapping.json').read_text())
+        self.assertEqual(
+            json.loads(result.stdout),
+            {'harnesses': sorted(['agentic', 'codex', *mapping])},
+        )
+
+    def test_missing_harness_or_role_without_the_listing_exits_with_json_error(self):
+        for arguments in ((), ('--role', 'worker'), ('--harness', 'codex')):
+            with self.subTest(arguments=arguments):
+                result = resolve(*arguments)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(
+                    json.loads(result.stdout)['error'],
+                    '--harness and --role are required',
+                )
+
+    def test_list_harnesses_records_no_metrics_event(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env, log_path = recording_env(directory, '{"event": event}')
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), '--list-harnesses'],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(log_path.exists())
+
+
 class BatchRoleResolutionTest(unittest.TestCase):
     def test_batch_roles_resolve_in_input_order_preserving_single_role_profiles(self):
         roles = ['reviewer', 'worker', 'tool-runner']
@@ -510,18 +557,8 @@ class BatchRoleResolutionTest(unittest.TestCase):
 
     def test_batch_records_comma_joined_role_and_model_metrics(self):
         with tempfile.TemporaryDirectory() as directory:
-            log_path = Path(directory) / 'metrics.jsonl'
-            recorder = Path(directory) / 'recorder.py'
-            recorder.write_text(
-                'import json\n'
-                'from pathlib import Path\n'
-                f'LOG = Path({str(log_path)!r})\n'
-                'def record(plugin, event, status, seconds, role=None, model=None):\n'
-                '    with LOG.open("a") as handle:\n'
-                '        handle.write(json.dumps({"status": status, "role": role, "model": model}) + "\\n")\n'
-            )
-            env = dict(os.environ, AGENTS_METRICS_MODULE=str(recorder))
-            env.pop('AGENTS_METRICS', None)
+            payload = '{"status": status, "role": role, "model": model}'
+            env, log_path = recording_env(directory, payload)
             single = subprocess.run(
                 [sys.executable, str(SCRIPT), '--harness', 'codex', '--role', 'worker'],
                 capture_output=True, text=True, env=env,

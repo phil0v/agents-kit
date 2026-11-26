@@ -19,10 +19,16 @@ except ModuleNotFoundError:
 
 
 def find_context(content, expected, cursor, end=False):
-    positions = [len(content) - len(expected)] if end else range(cursor, len(content) - len(expected) + 1)
+    positions = (
+        [len(content) - len(expected)]
+        if end
+        else range(cursor, len(content) - len(expected) + 1)
+    )
     for normalize in (lambda line: line, str.rstrip, str.strip):
         for position in positions:
-            if position >= cursor and [normalize(line) for line in content[position:position + len(expected)]] == [normalize(line) for line in expected]:
+            if position >= cursor and [
+                normalize(line) for line in content[position : position + len(expected)]
+            ] == [normalize(line) for line in expected]:
                 return position
     raise ValueError("patch context not found")
 
@@ -59,7 +65,7 @@ def apply_hunks(current, block):
                 start = find_context(content, old, cursor, end)
         elif anchor is None:
             start = len(content)
-        content[start:start + len(old)] = new
+        content[start : start + len(old)] = new
         cursor = start + len(new)
     return "\n".join(content) + "\n"
 
@@ -74,7 +80,11 @@ def patch_files(command, cwd, preview):
         header = lines[index]
         index += 1
         operation, separator, name = header.partition(": ")
-        if not separator or operation not in ("*** Add File", "*** Update File", "*** Delete File"):
+        if not separator or operation not in (
+            "*** Add File",
+            "*** Update File",
+            "*** Delete File",
+        ):
             raise ValueError(f"invalid patch header: {header}")
         source = (cwd / name).resolve()
         destination = source
@@ -86,8 +96,9 @@ def patch_files(command, cwd, preview):
             files[source] = None
             index += 1
         block = []
-        while index < len(lines) - 1 and (not lines[index].startswith("*** ")
-                                        or lines[index] == "*** End of File"):
+        while index < len(lines) - 1 and (
+            not lines[index].startswith("*** ") or lines[index] == "*** End of File"
+        ):
             block.append(lines[index])
             index += 1
         if operation == "*** Add File":
@@ -124,7 +135,11 @@ def claude_files(tool_input, before):
     old = tool_input["old_string"]
     if old not in current:
         return {}
-    return {path: current.replace(old, tool_input["new_string"], -1 if tool_input.get("replace_all") else 1)}
+    return {
+        path: current.replace(
+            old, tool_input["new_string"], -1 if tool_input.get("replace_all") else 1
+        )
+    }
 
 
 def antigravity_files(tool_call, cwd, before):
@@ -170,9 +185,11 @@ def reject_constant(value):
 
 
 def validate(path, content):
-    is_config = (path.name in ("config.toml", "hooks.json", "package.json", "pyproject.toml")
-                 or (path.parent.name == "agents" and path.suffix == ".toml")
-                 or (path.name.startswith("settings") and path.suffix == ".json"))
+    is_config = (
+        path.name in ("config.toml", "hooks.json", "package.json", "pyproject.toml")
+        or (path.parent.name == "agents" and path.suffix == ".toml")
+        or (path.name.startswith("settings") and path.suffix == ".json")
+    )
     if not is_config:
         return
     if path.suffix == ".json":
@@ -209,7 +226,7 @@ def project_root(path):
     for directory in path.parents:
         if (directory / ".git").exists():
             return directory
-    return path.parent
+    return None
 
 
 def _embedded_commands(path, root):
@@ -218,8 +235,11 @@ def _embedded_commands(path, root):
         formatter = find_tool("goimports", root) or find_tool("gofmt", root)
         if formatter:
             yield [formatter, "-w", str(path)]
-        if any((directory / name).is_file() for directory in path.parents
-               for name in (".golangci.yml", ".golangci.yaml")):
+        if any(
+            (directory / name).is_file()
+            for directory in path.parents
+            for name in (".golangci.yml", ".golangci.yaml")
+        ):
             linter = find_tool("golangci-lint", root)
             if linter:
                 yield [linter, "run", "--new-from-rev", "HEAD", "./."]
@@ -252,7 +272,9 @@ def _embedded_commands(path, root):
 def _shared_commands():
     source = Path(__file__).resolve().parent / "style-gate.py"
     try:
-        specification = importlib.util.spec_from_file_location("code_flow_style_gate", source)
+        specification = importlib.util.spec_from_file_location(
+            "code_flow_style_gate", source
+        )
         module = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(module)
         return module.commands
@@ -264,7 +286,9 @@ commands = _shared_commands() or _embedded_commands
 
 
 def _cache_recorder():
-    candidates = Path(__file__).resolve().parents[3].glob("usage-metrics/*/scripts/metrics.py")
+    candidates = (
+        Path(__file__).resolve().parents[3].glob("usage-metrics/*/scripts/metrics.py")
+    )
     return max(candidates, key=_version_key, default=None)
 
 
@@ -282,16 +306,25 @@ def _recorder_module():
         if not source.is_file():
             return None
     else:
-        source = Path(__file__).resolve().parents[2] / "usage-metrics" / "scripts" / "metrics.py"
+        source = (
+            Path(__file__).resolve().parents[2]
+            / "usage-metrics"
+            / "scripts"
+            / "metrics.py"
+        )
         if not source.is_file():
             source = _cache_recorder()
             if source is None:
-                home = Path(os.environ.get("AGENTS_HOME") or str(Path.home() / ".agents"))
+                home = Path(
+                    os.environ.get("AGENTS_HOME") or str(Path.home() / ".agents")
+                )
                 source = home / "plugins" / "usage-metrics" / "scripts" / "metrics.py"
             if not source.is_file():
                 return None
     try:
-        specification = importlib.util.spec_from_file_location("usage_metrics_recorder", source)
+        specification = importlib.util.spec_from_file_location(
+            "usage_metrics_recorder", source
+        )
         module = importlib.util.module_from_spec(specification)
         specification.loader.exec_module(module)
     except Exception:
@@ -305,7 +338,9 @@ def _record_run(status, started):
     try:
         module = _recorder_module()
         if module is not None:
-            module.record("code-flow", "edit-checks", status, time.monotonic() - started)
+            module.record(
+                "code-flow", "edit-checks", status, time.monotonic() - started
+            )
     except Exception:
         pass
 
@@ -323,6 +358,8 @@ def check_files(files):
             diagnostics.append(f"{path}: {error}")
             continue
         root = project_root(path)
+        if root is None:
+            continue
         for command in commands(path, root):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -334,9 +371,14 @@ def check_files(files):
                     git = find_tool("git", root)
                     if git is None:
                         continue
-                    head = subprocess.run([git, "rev-parse", "--verify", "-q", "HEAD"],
-                                          cwd=root, env=environment, capture_output=True,
-                                          text=True, timeout=min(30, remaining))
+                    head = subprocess.run(
+                        [git, "rev-parse", "--verify", "-q", "HEAD"],
+                        cwd=root,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                        timeout=min(30, remaining),
+                    )
                     if head.returncode:
                         continue
                     directory = path.parent
@@ -344,14 +386,22 @@ def check_files(files):
                     if remaining <= 0:
                         diagnostics.append("edit checks exceeded 90 seconds")
                         return diagnostics
-                result = subprocess.run(command, cwd=directory, env=environment, capture_output=True,
-                                        text=True, timeout=min(30, remaining))
+                result = subprocess.run(
+                    command,
+                    cwd=directory,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=min(30, remaining),
+                )
             except (OSError, subprocess.TimeoutExpired) as error:
                 diagnostics.append(f"{command[0]}: {error}")
                 continue
             if result.returncode:
-                diagnostics.append(f"{path}: {Path(command[0]).name} exited {result.returncode}\n"
-                                   + (result.stdout + result.stderr).strip())
+                diagnostics.append(
+                    f"{path}: {Path(command[0]).name} exited {result.returncode}\n"
+                    + (result.stdout + result.stderr).strip()
+                )
     return diagnostics
 
 
@@ -367,8 +417,17 @@ def _emit_pre_decision(antigravity, decision, reason=None):
         print(json.dumps(output))
         return
     if decision == "deny":
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                          "permissionDecision": "deny", "permissionDecisionReason": reason}}))
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                }
+            )
+        )
 
 
 def _emit_post_result(antigravity, diagnostics_text=""):
@@ -382,8 +441,10 @@ def _emit_post_result(antigravity, diagnostics_text=""):
 
 
 def main():
-    antigravity = ("--antigravity" in sys.argv[1:]
-                   or os.environ.get("LOCAL_GUARDS_HOOK_FORMAT") == "antigravity")
+    antigravity = (
+        "--antigravity" in sys.argv[1:]
+        or os.environ.get("LOCAL_GUARDS_HOOK_FORMAT") == "antigravity"
+    )
     before = True
     try:
         payload = json.load(sys.stdin)
@@ -403,7 +464,9 @@ def main():
             elif "file_path" in tool_input:
                 files = claude_files(tool_input, before)
             else:
-                raise ValueError("tool input carries neither a patch command nor a file path")
+                raise ValueError(
+                    "tool input carries neither a patch command nor a file path"
+                )
         if before:
             for path, content in files.items():
                 if content is not None:
