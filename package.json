@@ -1,6 +1,6 @@
 {
   "name": "@phil0v/agents-kit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Agent plugin marketplace: a delegation workflow, code review standards, local Git guards, a usage recorder, and standalone skills.",
   "license": "MIT",
   "dependencies": {

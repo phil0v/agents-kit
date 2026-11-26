@@ -16,7 +16,7 @@ class PluginHookTests(unittest.TestCase):
         claude = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
         codex = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
         self.assertEqual(claude["name"], "code-flow")
-        self.assertEqual({claude["version"], codex["version"]}, {"0.1.0"})
+        self.assertEqual({claude["version"], codex["version"]}, {"0.1.1"})
         self.assertNotIn("$schema", codex)
         self.assertEqual((claude["hooks"], codex["hooks"]),
                          ("./hooks/claude.json", "./hooks/codex.json"))

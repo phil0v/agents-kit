@@ -1,6 +1,6 @@
 {
   "name": "code-quality",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {"name": "phil0v"},
   "description": "Portable code standards and focused backend, frontend, Symfony, and agent-configuration review."
 }

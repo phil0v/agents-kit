@@ -15,7 +15,7 @@ class PluginHookTests(unittest.TestCase):
         self.assertFalse((ROOT / "plugin.json").exists())
         manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
         self.assertEqual(manifest["name"], "local-guards")
-        self.assertEqual(manifest["version"], "0.1.0")
+        self.assertEqual(manifest["version"], "0.1.1")
         self.assertNotIn("$schema", manifest)
         paths = [
             manifest["skills"],

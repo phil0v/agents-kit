@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "code-flow",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Coordinate implementation, independent close-out review, and OpenSpec change workflows with bundled agent resources and local edit checks.",
   "extensions": {
     "com.openai": {

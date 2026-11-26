@@ -24,7 +24,7 @@ class PackagePortabilityTest(unittest.TestCase):
         data = json.loads((self.package / 'plugin.json').read_text())
         self.assertEqual(data['$schema'], 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json')
         self.assertEqual(data['name'], 'code-quality')
-        self.assertEqual(data['version'], '0.1.0')
+        self.assertEqual(data['version'], '0.1.1')
         self.assertNotIn('skills', data)
         self.assertEqual(
             {path.parent.name for path in (self.package / 'skills').glob('*/SKILL.md')},

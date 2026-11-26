@@ -1,5 +1,5 @@
 {
   "name": "@phil0v/code-quality",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Portable code standards and focused backend, frontend, Symfony, and agent-configuration review."
 }

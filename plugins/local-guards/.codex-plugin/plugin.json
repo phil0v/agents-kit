@@ -1,6 +1,6 @@
 {
   "name": "local-guards",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local Git push protection and branch backups.",
   "skills": "./skills/",
   "hooks": "./hooks/codex.json",

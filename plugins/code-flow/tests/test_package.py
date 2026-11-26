@@ -19,7 +19,7 @@ class PackageTests(unittest.TestCase):
         self.assertIsInstance(manifest.get("extensions", {}), dict)
         self.assertEqual(manifest["$schema"], "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json")
         self.assertEqual(manifest["name"], "code-flow")
-        self.assertEqual(manifest["version"], "0.1.0")
+        self.assertEqual(manifest["version"], "0.1.1")
         self.assertTrue(manifest["description"])
 
     def test_claude_plugin_registers_every_canonical_role(self):
