@@ -56,6 +56,20 @@ from `$AGENTS_HOME/plugins/usage-metrics/`, and the usage log is
 `$AGENTS_HOME/metrics/usage.jsonl`. Without `AGENTS_HOME`, both default to
 `~/.agents`.
 
+### Through an agent prompt
+
+Paste this prompt into any agent that runs shell commands. The install
+commands per client are in [`docs/install.md`](docs/install.md); the client
+notes below still apply: hook trust and confirmation prompts, and the
+[skills directory](#skills-directory) links.
+
+```text
+Install the agents-kit packages for the client you are. Fetch
+https://raw.githubusercontent.com/phil0v/agents-kit/master/docs/install.md,
+follow the install commands for your client, verify with your client's list
+command, and show the output.
+```
+
 ### Claude Code
 
 ```sh
@@ -79,12 +93,13 @@ codex plugin marketplace add phil0v/agents-kit
 With a local clone, add its path instead:
 `codex plugin marketplace add .` from the clone root.
 
-Install the hook and recorder packages. Codex asks for hook trust on the
-first `code-flow` and `local-guards` use. The `code-flow` plugin adds only
-edit checks; the `code-flow` and `code-quality` skills come from the
-[skills directory](#skills-directory).
+Install the packages. Codex asks for hook trust on the first `code-flow` and
+`local-guards` use. The `code-flow` plugin adds only edit checks; the
+`code-quality` plugin adds its `code-reviewer` skill; the `code-flow` workflow
+skills come from the [skills directory](#skills-directory).
 
 ```sh
+codex plugin add code-quality@phil0v
 codex plugin add code-flow@phil0v
 codex plugin add local-guards@phil0v
 codex plugin add usage-metrics@phil0v

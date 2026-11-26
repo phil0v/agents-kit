@@ -79,6 +79,7 @@ alone does not prove support for workflow execution.
 
 ```sh
 codex plugin marketplace add phil0v/agents-kit
+codex plugin add code-quality@phil0v
 codex plugin add code-flow@phil0v
 codex plugin add local-guards@phil0v
 codex plugin add usage-metrics@phil0v
@@ -93,15 +94,15 @@ on the first `code-flow` and `local-guards` use.
 Codex cache find the recorder in the sibling `usage-metrics` copy of the cache.
 
 Codex scans `$HOME/.agents/skills/` as its USER scope and follows symlinked
-skill directories. The `code-flow` and `code-quality` skills load globally
-from `~/.agents/skills/` through the links above. The `code-flow` plugin
+skill directories. The `code-flow` workflow skills load globally from
+`~/.agents/skills/` through the links above. The `code-flow` plugin
 manifest registers only its hooks (`hooks/codex.json`): edit checks on
-`apply_patch`. `code-quality` contains no Codex hooks or agent forms, so Codex
-needs no plugin installation for it; remove a pre-packaging installation with
-`codex plugin remove code-quality@phil0v`. The `code-flow` roles remain
-available through `~/.agents/skills/`. Workflows dispatch them as resources
-from the package root (`roles/*.toml` through the skills'
-`references/dispatch.md`), never as plugin-registered native agents.
+`apply_patch`. The `code-quality` plugin serves its `code-reviewer` skill
+from the Codex cache; the package has no Codex hooks or agent forms. The
+`code-flow` roles remain available through `~/.agents/skills/`. Workflows
+dispatch them as resources from the package root (`roles/*.toml` through
+the skills' `references/dispatch.md`), never as plugin-registered native
+agents.
 
 ### Claude Code
 
@@ -445,6 +446,7 @@ For marketplace installs:
 
 ```sh
 codex plugin marketplace upgrade phil0v
+codex plugin add code-quality@phil0v
 codex plugin add code-flow@phil0v
 codex plugin add local-guards@phil0v
 codex plugin add usage-metrics@phil0v
@@ -459,6 +461,7 @@ For a local clone:
 
 ```sh
 git pull
+codex plugin add code-quality@phil0v
 codex plugin add code-flow@phil0v
 codex plugin add local-guards@phil0v
 codex plugin add usage-metrics@phil0v
